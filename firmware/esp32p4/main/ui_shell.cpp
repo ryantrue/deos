@@ -74,6 +74,8 @@ std::string bytes_human(uint64_t bytes) {
 
 struct ShellUi::Impl {
     lv_display_t* display{nullptr};
+    EntityRegistry& entities;
+    ActionRegistry& actions;
     platform::DevicePreferences& preferences;
     platform::ResourceRuntime& resources;
     platform::NetworkController& network;
@@ -86,11 +88,15 @@ struct ShellUi::Impl {
     bool developer_mode{false};
 
     Impl(lv_display_t* display_handle,
+         EntityRegistry& entity_registry,
+         ActionRegistry& action_registry,
          platform::DevicePreferences& device_preferences,
          platform::ResourceRuntime& resource_runtime,
          platform::NetworkController& network_controller,
          platform::StorageController& storage_controller)
         : display(display_handle),
+          entities(entity_registry),
+          actions(action_registry),
           preferences(device_preferences),
           resources(resource_runtime),
           network(network_controller),
@@ -491,7 +497,10 @@ struct ShellUi::Impl {
         lv_obj_t* control = make_tile(
             screen, kMargin, 270, col, "Control", "State + Actions",
             color(0x17251F), color(0x28573F));
-        lv_obj_t* c = make_label(control, "0 entities", color(0x9EE2BB));
+        const std::string model_count =
+            std::to_string(entities.size()) + " states · " +
+            std::to_string(actions.size()) + " actions";
+        lv_obj_t* c = make_label(control, model_count.c_str(), color(0x9EE2BB));
         lv_obj_set_pos(c, 0, 84);
         lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
 
@@ -613,22 +622,58 @@ struct ShellUi::Impl {
 
     void show_control() {
         lv_obj_t* screen = begin_screen("Control", true);
-        lv_obj_t* card = make_info_card(
-            screen,
-            "LOCAL-FIRST",
-            "State + Actions",
-            "Integrations and local hardware publish typed state into the entity "
-            "registry. UI, automations and AI consume the same model.\n\n"
-            "Examples: desk.light = on, room.temperature = 22.6 C, "
-            "music.play(), display.brightness.set().",
-            color(0x78D7A0));
 
-        lv_obj_t* entities = make_label(
-            card, "Entities   0", color(0xC9D7CF), &lv_font_montserrat_20);
-        lv_obj_set_pos(entities, 0, 304);
-        lv_obj_t* actions = make_label(
-            card, "Actions    0", color(0xC9D7CF), &lv_font_montserrat_20);
-        lv_obj_set_pos(actions, 220, 304);
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 118);
+        lv_obj_set_size(card, 672, 500);
+        set_panel_style(card, color(0x111A16), color(0x28573F));
+        lv_obj_set_style_pad_all(card, 26, 0);
+
+        lv_obj_t* state = make_label(
+            card, "LIVE SYSTEM MODEL", color(0x78D7A0), &lv_font_montserrat_20);
+        lv_obj_set_pos(state, 0, 0);
+
+        const std::string counts =
+            std::to_string(entities.size()) + " entities    ·    " +
+            std::to_string(actions.size()) + " actions";
+        lv_obj_t* count_label = make_label(
+            card, counts.c_str(), color(0xF0F5F2), &lv_font_montserrat_28);
+        lv_obj_set_pos(count_label, 0, 44);
+
+        lv_obj_t* explanation = make_label(
+            card,
+            "UI, automations and AI share these typed states and capability-scoped actions.",
+            color(0x8E9C94));
+        lv_label_set_long_mode(explanation, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(explanation, 610);
+        lv_obj_set_pos(explanation, 0, 92);
+
+        int y = 150;
+        const auto snapshots = entities.list();
+        for (std::size_t i = 0; i < snapshots.size() && i < 5; ++i) {
+            const auto& snapshot = snapshots[i];
+            const std::string line =
+                snapshot.descriptor.id + "  =  " + deos::to_string(snapshot.value) +
+                (snapshot.descriptor.unit.empty()
+                     ? std::string{}
+                     : " " + snapshot.descriptor.unit);
+            lv_obj_t* row = make_label(card, line.c_str(), color(0xC7D6CD));
+            lv_obj_set_pos(row, 0, y);
+            y += 40;
+        }
+
+        const auto action_list = actions.list();
+        if (!action_list.empty()) {
+            lv_obj_t* action_heading = make_label(
+                card, "Actions", color(0x72A98A), &lv_font_montserrat_20);
+            lv_obj_set_pos(action_heading, 0, 360);
+
+            const std::string action_line =
+                action_list.front().descriptor.id + "  [" +
+                action_list.front().descriptor.capability + "]";
+            lv_obj_t* action = make_label(card, action_line.c_str(), color(0xAFC6B7));
+            lv_obj_set_pos(action, 0, 400);
+        }
     }
 
     void show_automations() {
@@ -1041,7 +1086,7 @@ struct ShellUi::Impl {
 
         lv_obj_t* state = make_label(
             card,
-            "Touch  →  Desired State  →  Reconciler  →  DisplayController",
+            "Touch  →  Action  →  Desired State  →  Reconciler  →  Display",
             color(0x66809F));
         lv_obj_set_pos(state, 0, 266);
     }
@@ -1374,10 +1419,12 @@ struct ShellUi::Impl {
         Impl* ui = self(event);
         lv_obj_t* slider = static_cast<lv_obj_t*>(lv_event_get_target(event));
         const int value = lv_slider_get_value(slider);
-        (void)ui->resources.patch_spec(
-            {"Display", "primary"},
-            "brightness",
-            std::to_string(value));
+        const auto result = ui->actions.invoke(
+            "display.brightness.set",
+            {{"value", static_cast<std::int64_t>(value)}});
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "brightness action failed: %s", result.message.c_str());
+        }
     }
 
     static void on_update(lv_event_t* event) {
@@ -1466,12 +1513,14 @@ struct ShellUi::Impl {
 };
 
 ShellUi::ShellUi(lv_display_t* display,
+                 EntityRegistry& entities,
+                 ActionRegistry& actions,
                  platform::DevicePreferences& preferences,
                  platform::ResourceRuntime& resources,
                  platform::NetworkController& network,
                  platform::StorageController& storage)
     : impl_(std::make_unique<Impl>(
-          display, preferences, resources, network, storage)) {}
+          display, entities, actions, preferences, resources, network, storage)) {}
 
 ShellUi::~ShellUi() = default;
 
