@@ -2,6 +2,7 @@
 
 #include "ui_shell.hpp"
 
+#include "device_preferences.hpp"
 #include "network_controller.hpp"
 #include "resource_runtime.hpp"
 #include "storage_controller.hpp"
@@ -72,6 +73,7 @@ std::string bytes_human(uint64_t bytes) {
 
 struct ShellUi::Impl {
     lv_display_t* display{nullptr};
+    platform::DevicePreferences& preferences;
     platform::ResourceRuntime& resources;
     platform::NetworkController& network;
     platform::StorageController& storage;
@@ -83,10 +85,12 @@ struct ShellUi::Impl {
     bool developer_mode{false};
 
     Impl(lv_display_t* display_handle,
+         platform::DevicePreferences& device_preferences,
          platform::ResourceRuntime& resource_runtime,
          platform::NetworkController& network_controller,
          platform::StorageController& storage_controller)
         : display(display_handle),
+          preferences(device_preferences),
           resources(resource_runtime),
           network(network_controller),
           storage(storage_controller) {}
@@ -221,6 +225,217 @@ struct ShellUi::Impl {
         lv_obj_t* label = make_label(button, text, fg, &lv_font_montserrat_20);
         lv_obj_center(label);
         return button;
+    }
+
+    void finish_first_run() {
+        if (!preferences.set_setup_completed(true)) {
+            ESP_LOGW("deos-ui", "could not persist first-run completion");
+        }
+        show_home();
+    }
+
+    void show_first_run_welcome() {
+        lv_obj_t* screen = begin_screen("Welcome", false);
+
+        lv_obj_t* hero = lv_obj_create(screen);
+        lv_obj_set_pos(hero, 24, 120);
+        lv_obj_set_size(hero, 672, 360);
+        set_panel_style(hero, color(0x111A25), color(0x294D73));
+        lv_obj_set_style_pad_all(hero, 30, 0);
+
+        lv_obj_t* title = make_label(
+            hero, "DEOS is ready.", color(0xF5F8FB), &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* body = make_label(
+            hero,
+            "This device works locally first. Network, SD storage and AI are optional.\n\n"
+            "Setup takes only a few steps and never formats removable media automatically.",
+            color(0xAAB6C3));
+        lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(body, 610);
+        lv_obj_set_pos(body, 0, 62);
+
+        lv_obj_t* model = make_label(
+            hero,
+            "Local device  ·  Optional network  ·  Optional AI  ·  Explicit actions",
+            color(0x71A9E8));
+        lv_obj_set_pos(model, 0, 250);
+
+        lv_obj_t* start = make_action(
+            screen, "Start setup", color(0x2B6FC2), color(0xFFFFFF), 420);
+        lv_obj_set_pos(start, 276, 528);
+        lv_obj_add_event_cb(start, on_first_run_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* skip = make_action(
+            screen, "Use now", color(0x20252D), color(0xDCE3EA), 232);
+        lv_obj_set_pos(skip, 24, 528);
+        lv_obj_add_event_cb(skip, on_first_run_finish, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Everything shown here remains available later in Settings.",
+            color(0x66727F));
+        lv_obj_set_pos(note, 24, 618);
+    }
+
+    void show_first_run_network() {
+        lv_obj_t* screen = begin_screen("Network", false);
+        const platform::NetworkSnapshot net = network.snapshot();
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 116);
+        lv_obj_set_size(card, 672, 410);
+        set_panel_style(card, color(0x11151A), color(0x28313B));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        if (!net.initialized) {
+            lv_obj_t* title = make_label(
+                card, "Network service is starting.", color(0xE1C876),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 0);
+
+            lv_obj_t* body = make_label(
+                card,
+                "DEOS does not require Wi-Fi to boot. You can continue now and configure "
+                "networking later from Settings.",
+                color(0x9AA6B3));
+            lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(body, 610);
+            lv_obj_set_pos(body, 0, 70);
+        } else if (net.provisioning) {
+            lv_obj_t* title = make_label(
+                card, "Connect DEOS to Wi-Fi", color(0xF2F5F8),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 0);
+
+            lv_obj_t* intro = make_label(
+                card,
+                "From a phone or computer, join:",
+                color(0x8F9BA8));
+            lv_obj_set_pos(intro, 0, 62);
+
+            lv_obj_t* ssid = make_label(
+                card, net.setup_ssid.c_str(), color(0x73AFFF),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(ssid, 0, 102);
+
+            const std::string pass = "Password: " + net.setup_password;
+            lv_obj_t* password = make_label(card, pass.c_str(), color(0xD7DEE7));
+            lv_obj_set_pos(password, 0, 154);
+
+            lv_obj_t* steps = make_label(
+                card,
+                "Then open http://192.168.4.1/ and enter the Wi-Fi network DEOS should use.\n\n"
+                "The Wi-Fi password is stored only in device NVS.",
+                color(0x8894A1));
+            lv_label_set_long_mode(steps, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(steps, 610);
+            lv_obj_set_pos(steps, 0, 208);
+        } else {
+            lv_obj_t* title = make_label(
+                card,
+                net.connected ? "Network connected" : "Network configured",
+                net.connected ? color(0x74D89F) : color(0xE1C876),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 0);
+
+            add_info_row(card, "Wi-Fi", net.ssid.empty() ? "configured" : net.ssid);
+            add_info_row(card, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
+            add_info_row(card, "Local name", "deos.local");
+        }
+
+        lv_obj_t* later = make_action(
+            screen, "Skip network", color(0x20252D), color(0xDCE3EA), 232);
+        lv_obj_set_pos(later, 24, 568);
+        lv_obj_add_event_cb(later, on_first_run_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* next = make_action(
+            screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 420);
+        lv_obj_set_pos(next, 276, 568);
+        lv_obj_add_event_cb(next, on_first_run_storage, LV_EVENT_CLICKED, this);
+    }
+
+    void show_first_run_storage() {
+        lv_obj_t* screen = begin_screen("Storage", false);
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 116);
+        lv_obj_set_size(card, 672, 410);
+        set_panel_style(card, color(0x11151A), color(0x353426));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* title = make_label(
+            card,
+            "SD card is optional",
+            color(0xF2F5F8),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        const std::string state_text =
+            std::string("Detected state: ") + platform::to_string(sd.state);
+        lv_obj_t* state = make_label(
+            card,
+            state_text.c_str(),
+            sd.state == platform::SdVolumeState::Ready
+                ? color(0x74D89F)
+                : color(0xD8C576),
+            &lv_font_montserrat_20);
+        lv_obj_set_pos(state, 0, 62);
+
+        lv_obj_t* policy = make_label(
+            card,
+            "DEOS never formats removable media because mounting failed.\n\n"
+            "Readable foreign cards can be left untouched or initialized by creating "
+            "DEOS directories. Unsupported layouts are formatted only after an explicit "
+            "destructive confirmation.",
+            color(0x909CA9));
+        lv_label_set_long_mode(policy, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(policy, 610);
+        lv_obj_set_pos(policy, 0, 112);
+
+        lv_obj_t* review = make_action(
+            card, "Review SD card", color(0x34301D), color(0xE7D88C), 610);
+        lv_obj_set_pos(review, 0, 316);
+        lv_obj_add_event_cb(review, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* next = make_action(
+            screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 672);
+        lv_obj_set_pos(next, 24, 568);
+        lv_obj_add_event_cb(next, on_first_run_done, LV_EVENT_CLICKED, this);
+    }
+
+    void show_first_run_done() {
+        lv_obj_t* screen = begin_screen("Ready", false);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 132);
+        lv_obj_set_size(card, 672, 360);
+        set_panel_style(card, color(0x122018), color(0x285B3E));
+        lv_obj_set_style_pad_all(card, 30, 0);
+
+        lv_obj_t* title = make_label(
+            card,
+            "Your DEOS device is ready.",
+            color(0xF1F8F4),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* body = make_label(
+            card,
+            "Home stays useful without cloud services or AI. Add integrations, models, "
+            "automations and apps as you need them.\n\n"
+            "Network and storage can always be changed from Settings.",
+            color(0xA2B5AA));
+        lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(body, 610);
+        lv_obj_set_pos(body, 0, 72);
+
+        lv_obj_t* home = make_action(
+            screen, "Enter Home", color(0x297B4D), color(0xFFFFFF), 672);
+        lv_obj_set_pos(home, 24, 548);
+        lv_obj_add_event_cb(home, on_first_run_finish, LV_EVENT_CLICKED, this);
     }
 
     void show_home() {
@@ -955,6 +1170,22 @@ struct ShellUi::Impl {
         return static_cast<Impl*>(lv_event_get_user_data(event));
     }
 
+    static void on_first_run_network(lv_event_t* event) {
+        self(event)->show_first_run_network();
+    }
+
+    static void on_first_run_storage(lv_event_t* event) {
+        self(event)->show_first_run_storage();
+    }
+
+    static void on_first_run_done(lv_event_t* event) {
+        self(event)->show_first_run_done();
+    }
+
+    static void on_first_run_finish(lv_event_t* event) {
+        self(event)->finish_first_run();
+    }
+
     static void on_home(lv_event_t* event) {
         self(event)->show_home();
     }
@@ -1086,16 +1317,21 @@ struct ShellUi::Impl {
 };
 
 ShellUi::ShellUi(lv_display_t* display,
+                 platform::DevicePreferences& preferences,
                  platform::ResourceRuntime& resources,
                  platform::NetworkController& network,
                  platform::StorageController& storage)
     : impl_(std::make_unique<Impl>(
-          display, resources, network, storage)) {}
+          display, preferences, resources, network, storage)) {}
 
 ShellUi::~ShellUi() = default;
 
 void ShellUi::create() {
-    impl_->show_home();
+    if (impl_->preferences.setup_completed()) {
+        impl_->show_home();
+    } else {
+        impl_->show_first_run_welcome();
+    }
 }
 
 }  // namespace deos::ui
