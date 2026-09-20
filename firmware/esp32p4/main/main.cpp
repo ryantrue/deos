@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#include "deos/core/action.hpp"
 #include "deos/core/controller.hpp"
+#include "deos/core/event_bus.hpp"
 #include "deos/core/reconciler.hpp"
+#include "deos/core/state.hpp"
 #include "display_controller.hpp"
 #include "device_preferences.hpp"
 #include "network_controller.hpp"
@@ -81,11 +84,70 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "DEOS ESP32-P4 interactive OS bring-up");
 
     static deos::Reconciler engine;
+    static deos::EventBus system_events;
+    static deos::EntityRegistry entities(&system_events);
+    static deos::ActionRegistry actions(&system_events);
     static deos::platform::DevicePreferences preferences;
     static deos::platform::ResourceRuntime resource_runtime(engine);
 
     if (!preferences.initialize()) {
         ESP_LOGW(TAG, "preferences unavailable; using runtime defaults");
+    }
+
+    const int initial_brightness = preferences.brightness(72);
+
+    if (entities.size() == 0) {
+        (void)entities.register_entity(
+            {"system.ready", "System ready", "System/device", ""},
+            false);
+        (void)entities.register_entity(
+            {"display.brightness", "Display brightness", "Display/primary", "%"},
+            static_cast<std::int64_t>(initial_brightness));
+        (void)entities.register_entity(
+            {"storage.sd.state", "SD card state", "Storage/sd", ""},
+            std::string("unknown"));
+        (void)entities.register_entity(
+            {"network.connected", "Network connected", "Network/wifi", ""},
+            false);
+        (void)entities.register_entity(
+            {"network.ip", "Network address", "Network/wifi", ""},
+            std::string(""));
+    }
+
+    if (actions.size() == 0) {
+        (void)actions.register_action(
+            {
+                "display.brightness.set",
+                "Set display brightness",
+                "Set Display/primary brightness percentage",
+                "display.control",
+                {"value"},
+            },
+            [](const deos::StateValues& args) -> deos::ActionResult {
+                const auto it = args.find("value");
+                if (it == args.end()) {
+                    return {false, "missing value", {}};
+                }
+
+                const auto* value = std::get_if<std::int64_t>(&it->second);
+                if (value == nullptr || *value < 10 || *value > 100) {
+                    return {false, "brightness must be an integer from 10 to 100", {}};
+                }
+
+                if (!resource_runtime.patch_spec(
+                        {"Display", "primary"},
+                        "brightness",
+                        std::to_string(*value))) {
+                    return {false, "Display/primary reconciliation failed", {}};
+                }
+
+                (void)entities.set("display.brightness", *value);
+                return {
+                    true,
+                    "brightness updated",
+                    {{"value", *value}},
+                };
+            });
     }
 
     static auto system_controller = std::make_shared<SystemController>();
@@ -95,7 +157,12 @@ extern "C" void app_main(void) {
     static auto network_controller = std::make_shared<deos::platform::NetworkController>();
     static auto shell_controller =
         std::make_shared<deos::platform::ShellController>(
-            preferences, resource_runtime, *network_controller, *storage_controller);
+            entities,
+            actions,
+            preferences,
+            resource_runtime,
+            *network_controller,
+            *storage_controller);
     static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto update_controller =
         std::make_shared<deos::platform::UpdateController>(*network_controller);
@@ -121,7 +188,7 @@ extern "C" void app_main(void) {
     desired[{"Display", "primary"}] = {
         {"Display", "primary"},
         {
-            {"brightness", std::to_string(preferences.brightness(72))},
+            {"brightness", std::to_string(initial_brightness)},
             {"width", "720"},
             {"height", "720"},
             {"format", "rgb565"},
@@ -182,6 +249,13 @@ extern "C" void app_main(void) {
                  resource.status.message.c_str());
     }
 
+    (void)entities.set(
+        "system.ready",
+        resource_ready(engine, "System", "device"));
+    (void)entities.set(
+        "storage.sd.state",
+        std::string(deos::platform::to_string(storage_controller->snapshot().state)));
+
     // OTA validity is deliberately a local health decision. Mark a healthy
     // display/shell/touch image valid before optional network bring-up can
     // block or fail because of a missing router/C6 firmware mismatch.
@@ -228,4 +302,13 @@ extern "C" void app_main(void) {
                      resource.status.message.c_str());
         }
     }
+
+    const auto network_state = network_controller->snapshot();
+    (void)entities.set("network.connected", network_state.connected);
+    (void)entities.set("network.ip", network_state.ip);
+
+    ESP_LOGI(TAG,
+             "State + Actions ready: %u entities, %u actions",
+             static_cast<unsigned>(entities.size()),
+             static_cast<unsigned>(actions.size()));
 }
