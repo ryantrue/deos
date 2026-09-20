@@ -12,7 +12,9 @@ DEOS uses a mobile-style system shell with an adaptive tile home surface. The go
 - system screens use one visual language for rows, cards, dialogs and destructive confirmation;
 - touch targets are intentionally large for a 720x720 embedded display;
 - normal operation has no collection of recovery/safe modes;
-- Developer Mode is hidden from normal users and is enabled from build information.
+- Developer Mode is hidden from normal users and is enabled from build information;
+- once enabled, Developer Mode is stored in device preferences and survives reboot/OTA;
+- Developer Mode has an explicit disable action and never changes the normal boot path.
 
 ## First-run experience
 
