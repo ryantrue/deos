@@ -1,0 +1,23 @@
+name: Host Core CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDEOS_WARNINGS_AS_ERRORS=ON -DDEOS_SANITIZERS=ON
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Validate example manifest
+        run: python3 tools/deosctl/deosctl.py validate config/system.example.json
+      - name: Show example plan
+        run: python3 tools/deosctl/deosctl.py plan config/system.example.json --actual config/system.actual.json
+      - name: CLI tests
+        run: python3 -m unittest discover -s tools/deosctl -p 'test_*.py'

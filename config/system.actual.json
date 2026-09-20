@@ -1,0 +1,15 @@
+{
+  "apiVersion": "deos/v1alpha1",
+  "resources": [
+    {
+      "kind": "Display",
+      "metadata": {"name": "primary"},
+      "spec": {"brightness": 50}
+    },
+    {
+      "kind": "Network",
+      "metadata": {"name": "wifi"},
+      "spec": {"profile": "home"}
+    }
+  ]
+}

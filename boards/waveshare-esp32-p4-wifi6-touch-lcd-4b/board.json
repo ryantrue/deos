@@ -1,0 +1,47 @@
+{
+  "apiVersion": "deos.board/v1alpha1",
+  "kind": "Board",
+  "metadata": {
+    "name": "waveshare-esp32-p4-wifi6-touch-lcd-4b"
+  },
+  "spec": {
+    "soc": "esp32p4",
+    "flashMiB": 32,
+    "psramMiB": 32,
+    "display": {
+      "controller": "st7703",
+      "width": 720,
+      "height": 720,
+      "bus": "mipi-dsi",
+      "lanes": 2,
+      "laneMbps": 480,
+      "resetGpio": 27,
+      "backlightGpio": 26
+    },
+    "touch": {
+      "controller": "gt911",
+      "bus": "i2c0",
+      "sdaGpio": 7,
+      "sclGpio": 8
+    },
+    "audio": {
+      "speakerCodec": "es8311",
+      "microphoneCodec": "es7210",
+      "i2s": {
+        "mclkGpio": 13,
+        "bclkGpio": 12,
+        "wsGpio": 10,
+        "doutGpio": 9,
+        "dinGpio": 11
+      },
+      "powerAmpEnableGpio": 53
+    },
+    "storage": {
+      "sdmmcHost": 0
+    },
+    "network": {
+      "companion": "esp32c6",
+      "transport": "esp-hosted"
+    }
+  }
+}

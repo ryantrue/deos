@@ -1,0 +1,37 @@
+{
+  "apiVersion": "deos/v1alpha1",
+  "resources": [
+    {
+      "kind": "Display",
+      "metadata": {"name": "primary"},
+      "spec": {"brightness": 70}
+    },
+    {
+      "kind": "Network",
+      "metadata": {"name": "wifi"},
+      "spec": {"profile": "home"}
+    },
+    {
+      "kind": "Storage",
+      "metadata": {"name": "sd0"},
+      "spec": {"policy": "managed", "filesystem": "fat32", "format": "never-automatic"}
+    },
+    {
+      "kind": "AIProvider",
+      "metadata": {"name": "local-qwen"},
+      "dependsOn": ["Network/wifi"],
+      "spec": {
+        "type": "openai-compatible",
+        "endpoint": "http://192.168.1.20:8000/v1",
+        "model": "qwen",
+        "enabled": true
+      }
+    },
+    {
+      "kind": "Dashboard",
+      "metadata": {"name": "home"},
+      "dependsOn": ["Display/primary"],
+      "spec": {"layout": "2x2"}
+    }
+  ]
+}
