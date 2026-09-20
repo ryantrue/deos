@@ -46,6 +46,14 @@ class DeosCtlTests(unittest.TestCase):
         errors = deosctl.validate(doc)
         self.assertTrue(any(error.startswith("dependency cycle:") for error in errors))
 
+    def test_normalize_device(self):
+        self.assertEqual(deosctl.normalize_device("deos.local/"), "http://deos.local")
+        self.assertEqual(deosctl.normalize_device("http://10.0.0.2/"), "http://10.0.0.2")
+        self.assertEqual(deosctl.normalize_device("https://deos.example"), "https://deos.example")
+
+    def test_resolve_token_explicit(self):
+        self.assertEqual(deosctl.resolve_token("abc123"), "abc123")
+
     def test_plan_is_deterministic(self):
         desired = manifest([
             resource("Display", "primary", spec={"brightness": 70}),
