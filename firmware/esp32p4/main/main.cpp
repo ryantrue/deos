@@ -82,19 +82,20 @@ extern "C" void app_main(void) {
     static auto system_controller = std::make_shared<SystemController>();
     static auto display_controller = std::make_shared<deos::platform::DisplayController>();
     static auto storage_controller = std::make_shared<deos::platform::StorageController>();
-    static auto shell_controller =
-        std::make_shared<deos::platform::ShellController>(*storage_controller);
-    static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto network_controller = std::make_shared<deos::platform::NetworkController>();
+    static auto shell_controller =
+        std::make_shared<deos::platform::ShellController>(
+            *network_controller, *storage_controller);
+    static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto update_controller =
         std::make_shared<deos::platform::UpdateController>(*network_controller);
 
     engine.register_controller(system_controller);
     engine.register_controller(display_controller);
     engine.register_controller(storage_controller);
+    engine.register_controller(network_controller);
     engine.register_controller(shell_controller);
     engine.register_controller(touch_controller);
-    engine.register_controller(network_controller);
     engine.register_controller(update_controller);
 
     deos::ResourceMap desired;
