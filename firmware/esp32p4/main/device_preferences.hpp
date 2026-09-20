@@ -15,6 +15,9 @@ public:
     bool setup_completed() const;
     bool set_setup_completed(bool completed);
 
+    bool developer_mode() const;
+    bool set_developer_mode(bool enabled);
+
 private:
     bool initialized_{false};
 };
