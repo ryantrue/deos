@@ -3,7 +3,9 @@
 #include "display_controller.hpp"
 #include "ui_shell.hpp"
 
+#include "driver/gpio.h"
 #include "driver/ledc.h"
+#include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_ops.h"
@@ -26,8 +28,8 @@ namespace {
 constexpr char kTag[] = "deos-display";
 constexpr int kWidth = 720;
 constexpr int kHeight = 720;
-constexpr int kResetGpio = 27;
-constexpr int kBacklightGpio = 26;
+constexpr gpio_num_t kResetGpio = GPIO_NUM_27;
+constexpr gpio_num_t kBacklightGpio = GPIO_NUM_26;
 constexpr int kDsiLanes = 2;
 constexpr int kDsiLaneMbps = 480;
 constexpr int kDpiClockMhz = 38;
@@ -126,7 +128,6 @@ struct DisplayController::Impl {
         channel.gpio_num = kBacklightGpio;
         channel.speed_mode = kLedcMode;
         channel.channel = kLedcChannel;
-        channel.intr_type = LEDC_INTR_DISABLE;
         channel.timer_sel = kLedcTimer;
         channel.duty = 0;
         channel.hpoint = 0;
@@ -166,7 +167,7 @@ struct DisplayController::Impl {
         esp_lcd_dsi_bus_config_t bus{};
         bus.bus_id = 0;
         bus.num_data_lanes = kDsiLanes;
-        bus.phy_clk_src = 0;
+        bus.phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT;
         bus.lane_bit_rate_mbps = kDsiLaneMbps;
         ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus, &dsi_bus), kTag,
                             "create DSI bus failed");
