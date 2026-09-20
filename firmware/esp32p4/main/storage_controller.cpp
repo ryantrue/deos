@@ -17,6 +17,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <utility>
 
 namespace deos::platform {
 namespace {
@@ -84,6 +85,7 @@ const char* to_string(SdVolumeState state) noexcept {
 struct StorageController::Impl {
     enum class Operation {
         None,
+        Probe,
         Initialize,
         Format,
     };
@@ -312,7 +314,13 @@ struct StorageController::Impl {
         self->unlock();
 
         esp_err_t err = ESP_ERR_INVALID_STATE;
-        if (current == Operation::Initialize) {
+        if (current == Operation::Probe) {
+            self->set_status(
+                SdVolumeState::Busy,
+                "Checking SD card",
+                "probe");
+            err = self->probe();
+        } else if (current == Operation::Initialize) {
             self->set_status(
                 SdVolumeState::Busy,
                 "Creating DEOS directories; existing files are preserved",
@@ -347,9 +355,14 @@ struct StorageController::Impl {
         operation = requested;
         unlock();
 
+        const char* task_name = requested == Operation::Format
+                                    ? "deos-sd-format"
+                                    : (requested == Operation::Probe
+                                           ? "deos-sd-probe"
+                                           : "deos-sd-init");
         const BaseType_t result = xTaskCreate(
             worker,
-            requested == Operation::Format ? "deos-sd-format" : "deos-sd-init",
+            task_name,
             kWorkerStack,
             this,
             kWorkerPriority,
@@ -413,6 +426,15 @@ SdVolumeSnapshot StorageController::snapshot() const {
     return copy;
 }
 
+bool StorageController::request_rescan() {
+    const SdVolumeSnapshot state = snapshot();
+    if (state.state != SdVolumeState::Absent &&
+        state.state != SdVolumeState::Error) {
+        return false;
+    }
+    return impl_->request(Impl::Operation::Probe);
+}
+
 bool StorageController::request_initialize_for_deos() {
     const SdVolumeSnapshot state = snapshot();
     if (state.state != SdVolumeState::Foreign) {
@@ -424,8 +446,7 @@ bool StorageController::request_initialize_for_deos() {
 bool StorageController::request_format_for_deos() {
     const SdVolumeSnapshot state = snapshot();
     if (state.state != SdVolumeState::Foreign &&
-        state.state != SdVolumeState::NeedsFormat &&
-        state.state != SdVolumeState::Error) {
+        state.state != SdVolumeState::NeedsFormat) {
         return false;
     }
     return impl_->request(Impl::Operation::Format);
