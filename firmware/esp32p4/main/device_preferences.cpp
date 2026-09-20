@@ -14,6 +14,7 @@ constexpr char kTag[] = "deos-prefs";
 constexpr char kNamespace[] = "deos_prefs";
 constexpr char kBrightness[] = "brightness";
 constexpr char kSetupCompleted[] = "setup_done";
+constexpr char kDeveloperMode[] = "dev_mode";
 }
 
 bool DevicePreferences::initialize() {
@@ -136,6 +137,48 @@ bool DevicePreferences::set_setup_completed(bool completed) {
     }
 
     ESP_LOGI(kTag, "first-run setup: %s", completed ? "complete" : "pending");
+    return true;
+}
+
+bool DevicePreferences::developer_mode() const {
+    if (!initialized_) {
+        return false;
+    }
+
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+
+    uint8_t value = 0;
+    const esp_err_t err = nvs_get_u8(handle, kDeveloperMode, &value);
+    nvs_close(handle);
+    return err == ESP_OK && value == 1;
+}
+
+bool DevicePreferences::set_developer_mode(bool enabled) {
+    if (!initialized_) {
+        return false;
+    }
+
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+        return false;
+    }
+
+    esp_err_t err = nvs_set_u8(handle, kDeveloperMode, enabled ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "developer mode persistence failed: %s",
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(kTag, "developer mode: %s", enabled ? "enabled" : "disabled");
     return true;
 }
 
