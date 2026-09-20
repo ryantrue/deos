@@ -8,6 +8,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         deos_core
+        freertos
         esp_lcd
         esp_driver_ledc
         esp_hw_support
