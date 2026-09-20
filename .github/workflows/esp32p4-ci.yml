@@ -37,19 +37,40 @@ jobs:
           build="firmware/esp32p4/build"
 
           test -s "$build/deos_esp32p4.bin"
-          test -s "$build/bootloader/bootloader.bin"
-          test -s "$build/partition_table/partition-table.bin"
           test -s "$build/flash_args"
           test -s "$build/flasher_args.json"
 
           rm -rf "$package"
-          mkdir -p "$package/bootloader" "$package/partition_table"
+          mkdir -p "$package"
 
-          cp "$build/deos_esp32p4.bin" "$package/"
-          cp "$build/bootloader/bootloader.bin" "$package/bootloader/"
-          cp "$build/partition_table/partition-table.bin" "$package/partition_table/"
-          cp "$build/flash_args" "$package/"
-          cp "$build/flasher_args.json" "$package/"
+          BUILD_DIR="$build" PACKAGE_DIR="$package" python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shutil
+
+          build = pathlib.Path(os.environ["BUILD_DIR"])
+          package = pathlib.Path(os.environ["PACKAGE_DIR"])
+          args = json.loads((build / "flasher_args.json").read_text())
+
+          flash_files = args.get("flash_files", {})
+          if not flash_files:
+              raise SystemExit("flasher_args.json has no flash_files")
+
+          for offset, relative in flash_files.items():
+              src = build / relative
+              if not src.is_file() or src.stat().st_size == 0:
+                  raise SystemExit(f"missing flash image {relative} for {offset}")
+              dst = package / relative
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              print(f"{offset}: {relative} ({src.stat().st_size} bytes)")
+
+          shutil.copy2(build / "flash_args", package / "flash_args")
+          shutil.copy2(build / "flasher_args.json", package / "flasher_args.json")
+          PY
+
+          cp "firmware/esp32p4/partitions.csv" "$package/partitions.csv"
 
           {
             echo "DEOS ESP32-P4 CI flash package"
@@ -57,13 +78,18 @@ jobs:
             echo "idf=6.1"
             echo "target=esp32p4"
             echo
-            echo "Flash from this directory with ESP-IDF 6.1 active:"
-            echo 'python -m esptool --chip esp32p4 -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"'
+            echo "First migration to the A/B layout:"
+            echo 'python -m esptool --chip esp32p4 -p "$PORT" erase-flash'
+            echo 'python -m esptool --chip esp32p4 -p "$PORT" -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"'
+            echo
+            echo "Later OTA updates upload only deos_esp32p4.bin."
           } > "$package/BUILD_INFO.txt"
 
           (
             cd "$package"
-            sha256sum               deos_esp32p4.bin               bootloader/bootloader.bin               partition_table/partition-table.bin               flash_args               flasher_args.json > SHA256SUMS
+            find . -type f ! -name SHA256SUMS -print0 |
+              sort -z |
+              xargs -0 shasum -a 256 > SHA256SUMS
           )
 
       - name: Upload ESP32-P4 flash package
