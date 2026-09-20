@@ -14,6 +14,11 @@ on:
       - "boards/waveshare-esp32-p4-wifi6-touch-lcd-4b/**"
       - ".github/workflows/esp32p4-ci.yml"
 
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
