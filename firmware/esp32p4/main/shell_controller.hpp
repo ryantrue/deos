@@ -12,13 +12,15 @@ class ShellUi;
 
 namespace deos::platform {
 
+class DevicePreferences;
 class NetworkController;
 class ResourceRuntime;
 class StorageController;
 
 class ShellController final : public Controller {
 public:
-    ShellController(ResourceRuntime& resources,
+    ShellController(DevicePreferences& preferences,
+                    ResourceRuntime& resources,
                     NetworkController& network,
                     StorageController& storage);
     ~ShellController() override;
@@ -29,6 +31,7 @@ public:
     ResourceStatus remove(const AppliedResource& current) override;
 
 private:
+    DevicePreferences& preferences_;
     ResourceRuntime& resources_;
     NetworkController& network_;
     StorageController& storage_;
