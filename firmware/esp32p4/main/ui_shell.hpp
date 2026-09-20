@@ -6,6 +6,7 @@
 #include <memory>
 
 namespace deos::platform {
+class NetworkController;
 class StorageController;
 }
 
@@ -13,7 +14,9 @@ namespace deos::ui {
 
 class ShellUi final {
 public:
-    ShellUi(lv_display_t* display, platform::StorageController& storage);
+    ShellUi(lv_display_t* display,
+            platform::NetworkController& network,
+            platform::StorageController& storage);
     ~ShellUi();
 
     ShellUi(const ShellUi&) = delete;
