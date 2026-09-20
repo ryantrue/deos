@@ -112,6 +112,7 @@ std::string form_value(std::string_view body, std::string_view key) {
 
 struct NetworkController::Impl {
     NetworkController* owner{nullptr};
+    EntityRegistry& entities;
     mutable SemaphoreHandle_t state_mutex{nullptr};
     httpd_handle_t server{nullptr};
     esp_netif_t* netif{nullptr};
@@ -128,7 +129,8 @@ struct NetworkController::Impl {
     bool is_provisioning{false};
     int retry_count{0};
 
-    Impl() {
+    explicit Impl(EntityRegistry& entity_registry)
+        : entities(entity_registry) {
         state_mutex = xSemaphoreCreateMutex();
     }
 
@@ -192,6 +194,8 @@ struct NetworkController::Impl {
             self->is_connected = false;
             self->ip_address.clear();
             self->unlock_state();
+            (void)self->entities.set("network.connected", false);
+            (void)self->entities.set("network.ip", std::string(""));
             const NetworkSnapshot state = self->snapshot_state();
             if (!state.provisioning && self->retry_count < kMaxRetries) {
                 ++self->retry_count;
@@ -212,6 +216,8 @@ struct NetworkController::Impl {
             self->ip_address = ip;
             self->is_connected = true;
             self->unlock_state();
+            (void)self->entities.set("network.ip", std::string(ip));
+            (void)self->entities.set("network.connected", true);
             self->retry_count = 0;
             ESP_LOGI(kTag, "Wi-Fi connected: %s", ip);
         }
@@ -566,7 +572,10 @@ struct NetworkController::Impl {
 
         lock_state();
         ip_address = "192.168.4.1";
+        is_connected = false;
         unlock_state();
+        (void)entities.set("network.connected", false);
+        (void)entities.set("network.ip", std::string("192.168.4.1"));
         ESP_LOGW(kTag, "No Wi-Fi profile found");
         ESP_LOGW(kTag, "Setup AP: %s", ap_ssid.c_str());
         ESP_LOGW(kTag, "Setup password: %s", ap_password.c_str());
@@ -577,9 +586,13 @@ struct NetworkController::Impl {
     esp_err_t start_station() {
         lock_state();
         is_provisioning = false;
+        is_connected = false;
+        ip_address.clear();
         const std::string station_ssid = stored_ssid;
         const std::string station_password = stored_password;
         unlock_state();
+        (void)entities.set("network.connected", false);
+        (void)entities.set("network.ip", std::string(""));
 
         netif = esp_netif_create_default_wifi_sta();
         if (netif == nullptr) {
@@ -669,7 +682,8 @@ struct NetworkController::Impl {
     }
 };
 
-NetworkController::NetworkController() : impl_(std::make_unique<Impl>()) {
+NetworkController::NetworkController(EntityRegistry& entities)
+    : impl_(std::make_unique<Impl>(entities)) {
     impl_->owner = this;
 }
 
