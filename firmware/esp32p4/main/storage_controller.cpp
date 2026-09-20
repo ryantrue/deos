@@ -271,7 +271,8 @@ struct StorageController::Impl {
         std::fputs(
             "DEOS_VOLUME=1\n"
             "schema=1\n"
-            "board=waveshare-esp32-p4-wifi6-touch-lcd-4b\n",
+            "filesystem=fat\n"
+            "portable=true\n",
             marker);
         std::fclose(marker);
 
