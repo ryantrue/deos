@@ -669,8 +669,8 @@ struct ShellUi::Impl {
             lv_obj_set_pos(action_heading, 0, 360);
 
             const std::string action_line =
-                action_list.front().descriptor.id + "  [" +
-                action_list.front().descriptor.capability + "]";
+                action_list.front().id + "  [" +
+                action_list.front().capability + "]";
             lv_obj_t* action = make_label(card, action_line.c_str(), color(0xAFC6B7));
             lv_obj_set_pos(action, 0, 400);
         }
