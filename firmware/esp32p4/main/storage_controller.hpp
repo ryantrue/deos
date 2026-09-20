@@ -44,6 +44,7 @@ public:
     SdVolumeSnapshot snapshot() const;
 
     // Non-blocking requests. Work is executed on a dedicated FreeRTOS task.
+    bool request_rescan();
     bool request_initialize_for_deos();
     bool request_format_for_deos();
 
