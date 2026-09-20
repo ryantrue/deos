@@ -413,10 +413,19 @@ struct ShellUi::Impl {
             lv_obj_set_width(step, 610);
             lv_obj_set_pos(step, 0, 205);
         } else {
-            add_info_row(card, "Wi-Fi", net.ssid.empty() ? "configured" : net.ssid);
-            add_info_row(card, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
-            add_info_row(card, "Local name", "deos.local");
-            add_info_row(card, "Control API", "port 80 / token auth");
+            lv_obj_t* details = lv_obj_create(card);
+            lv_obj_set_pos(details, 0, 58);
+            lv_obj_set_size(details, 620, 250);
+            lv_obj_set_style_bg_opa(details, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(details, 0, 0);
+            lv_obj_set_style_pad_all(details, 0, 0);
+            lv_obj_set_style_pad_row(details, 2, 0);
+            lv_obj_set_flex_flow(details, LV_FLEX_FLOW_COLUMN);
+
+            add_info_row(details, "Wi-Fi", net.ssid.empty() ? "configured" : net.ssid);
+            add_info_row(details, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
+            add_info_row(details, "Local name", "deos.local");
+            add_info_row(details, "Control API", "port 80 / token auth");
 
             lv_obj_t* forget = make_action(
                 screen, "Forget Wi-Fi...", color(0x3A2023), color(0xF2B2B7), 672);
