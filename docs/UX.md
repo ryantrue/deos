@@ -14,6 +14,34 @@ DEOS uses a mobile-style system shell with an adaptive tile home surface. The go
 - normal operation has no collection of recovery/safe modes;
 - Developer Mode is hidden from normal users and is enabled from build information.
 
+## First-run experience
+
+The first boot uses the normal system shell, not a separate recovery/setup mode.
+
+If `setup_done` is absent from device preferences, DEOS presents:
+
+```text
+Welcome
+  ↓
+Network
+  ↓
+Storage
+  ↓
+Ready
+  ↓
+Home
+```
+
+Rules:
+
+- every step is optional;
+- **Use now** exits setup immediately and marks first-run complete;
+- networking may still be starting or unavailable without blocking setup;
+- storage is summarized but never modified automatically;
+- destructive SD formatting remains in the regular Storage confirmation flow;
+- completion is stored in NVS and survives OTA;
+- all setup functions remain available later in Settings.
+
 ## Current navigation
 
 ```text
@@ -37,6 +65,14 @@ The Home dock provides direct access to:
 ```text
 Home  ·  Control  ·  AI  ·  Apps
 ```
+
+The top-right system status pill is interactive and opens **Quick Settings**. Its label reflects the current connectivity state:
+
+```text
+LOCAL  ·  SETUP  ·  WIFI
+```
+
+Quick Settings provides brightness plus direct Network, Storage and Settings entry points. Brightness still updates `Display/primary` desired state through the reconciler; system chrome never bypasses the resource model.
 
 A control that looks interactive must have a meaningful action. Placeholder features should open an explanatory system surface rather than silently ignore touch.
 
