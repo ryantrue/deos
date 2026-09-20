@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #include "deos/core/controller.hpp"
 #include "deos/core/reconciler.hpp"
+#include "display_controller.hpp"
 
 #include "esp_log.h"
 
@@ -9,7 +12,7 @@
 namespace {
 constexpr const char* TAG = "deos";
 
-class BootstrapController final : public deos::Controller {
+class SystemController final : public deos::Controller {
 public:
     bool supports(std::string_view kind) const override {
         return kind == "System";
@@ -18,27 +21,46 @@ public:
     deos::ResourceStatus reconcile(const deos::Resource& desired,
                                    const deos::AppliedResource*) override {
         ESP_LOGI(TAG, "reconcile %s", deos::to_string(desired.key).c_str());
-        return {deos::Phase::Ready, "bootstrap controller ready", desired.spec};
+        return {deos::Phase::Ready, "system resource ready", desired.spec};
     }
 
-    deos::ResourceStatus remove(const deos::AppliedResource& current) override {
-        ESP_LOGI(TAG, "remove %s", deos::to_string(current.desired.key).c_str());
-        return {deos::Phase::Ready, "removed", {}};
+    deos::ResourceStatus remove(const deos::AppliedResource&) override {
+        return {deos::Phase::Error, "System/device cannot be hot-removed", {}};
     }
 };
-}
+
+}  // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "DEOS ESP32-P4 bootstrap");
+    ESP_LOGI(TAG, "DEOS ESP32-P4 UI bring-up");
 
-    deos::Reconciler engine;
-    engine.register_controller(std::make_shared<BootstrapController>());
+    // Static lifetime is intentional: controllers own hardware/runtime handles used
+    // by long-lived FreeRTOS/LVGL callbacks after app_main() returns.
+    static deos::Reconciler engine;
+    static auto system_controller = std::make_shared<SystemController>();
+    static auto display_controller = std::make_shared<deos::platform::DisplayController>();
+
+    engine.register_controller(system_controller);
+    engine.register_controller(display_controller);
 
     deos::ResourceMap desired;
     desired[{"System", "device"}] = {
         {"System", "device"},
-        {{"board", "waveshare-esp32-p4-wifi6-touch-lcd-4b"}, {"mode", "normal"}},
+        {
+            {"board", "waveshare-esp32-p4-wifi6-touch-lcd-4b"},
+            {"mode", "normal"},
+        },
         {}
+    };
+    desired[{"Display", "primary"}] = {
+        {"Display", "primary"},
+        {
+            {"brightness", "72"},
+            {"width", "720"},
+            {"height", "720"},
+            {"format", "rgb565"},
+        },
+        {{"System", "device"}}
     };
 
     for (const auto& step : engine.plan(desired)) {
@@ -48,6 +70,14 @@ extern "C" void app_main(void) {
     }
 
     engine.apply(std::move(desired));
-    const auto operations = engine.run_until_idle();
-    ESP_LOGI(TAG, "reconciliation complete: %u operation(s)", static_cast<unsigned>(operations));
+    const auto operations = engine.run_until_idle(32);
+    ESP_LOGI(TAG, "reconciliation complete: %u operation(s)",
+             static_cast<unsigned>(operations));
+
+    for (const auto& [key, resource] : engine.actual()) {
+        ESP_LOGI(TAG, "%s => %s (%s)",
+                 deos::to_string(key).c_str(),
+                 deos::to_string(resource.status.phase).c_str(),
+                 resource.status.message.c_str());
+    }
 }
