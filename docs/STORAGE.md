@@ -121,8 +121,11 @@ Current marker schema:
 ```text
 DEOS_VOLUME=1
 schema=1
-board=waveshare-esp32-p4-wifi6-touch-lcd-4b
+filesystem=fat
+portable=true
 ```
+
+The removable volume is intentionally board-independent. A card initialized by one DEOS device should remain recognizable on future supported DEOS hardware. Hardware compatibility belongs to device resources and drivers, not removable-volume identity.
 
 The marker format is versioned so later DEOS releases can migrate layout rules without guessing.
 
