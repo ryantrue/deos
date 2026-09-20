@@ -4,6 +4,8 @@ idf_component_register(
         "../../../../core/src/plan.cpp"
         "../../../../core/src/reconciler.cpp"
         "../../../../core/src/event_bus.cpp"
+        "../../../../core/src/state.cpp"
+        "../../../../core/src/action.cpp"
     INCLUDE_DIRS
         "../../../../core/include"
 )
