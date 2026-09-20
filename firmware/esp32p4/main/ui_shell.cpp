@@ -12,7 +12,7 @@ constexpr int kColumn = 216;
 constexpr int kTileHeight = 150;
 constexpr int kWide = kColumn * 2 + kGap;
 
-constexpr lv_color_t color(uint32_t rgb) {
+lv_color_t color(uint32_t rgb) {
     return lv_color_hex(rgb);
 }
 
