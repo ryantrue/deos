@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "display_controller.hpp"
-#include "ui_shell.hpp"
+#include "ui_runtime.hpp"
 
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -66,8 +66,15 @@ void lvgl_tick(void*) {
 
 void lvgl_task(void*) {
     ESP_LOGI(kTag, "LVGL task started");
+    auto& runtime = ui::UiRuntime::instance();
     while (true) {
-        uint32_t delay_ms = lv_timer_handler();
+        uint32_t delay_ms = 10;
+        {
+            ui::UiLock lock(runtime);
+            if (lock.locked()) {
+                delay_ms = lv_timer_handler();
+            }
+        }
         if (delay_ms < 1) {
             delay_ms = 1;
         } else if (delay_ms > 20) {
@@ -257,7 +264,10 @@ struct DisplayController::Impl {
         ESP_RETURN_ON_ERROR(esp_timer_start_periodic(tick_timer, kLvglTickMs * 1000), kTag,
                             "start LVGL tick timer failed");
 
-        ui::create_boot_shell(display);
+        if (!ui::UiRuntime::instance().initialize(display)) {
+            ESP_LOGE(kTag, "attach UI runtime failed");
+            return ESP_ERR_NO_MEM;
+        }
 
         const BaseType_t task_created = xTaskCreate(lvgl_task,
                                                      "deos_lvgl",
@@ -315,7 +325,7 @@ ResourceStatus DisplayController::reconcile(const Resource& desired,
     }
 
     return {Phase::Ready,
-            "ST7703 + LVGL shell ready",
+            "ST7703 + LVGL runtime ready",
             {
                 {"panel", "st7703"},
                 {"resolution", "720x720"},
