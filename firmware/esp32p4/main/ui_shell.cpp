@@ -9,6 +9,7 @@
 
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -340,9 +341,19 @@ struct ShellUi::Impl {
                 &lv_font_montserrat_28);
             lv_obj_set_pos(title, 0, 0);
 
-            add_info_row(card, "Wi-Fi", net.ssid.empty() ? "configured" : net.ssid);
-            add_info_row(card, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
-            add_info_row(card, "Local name", "deos.local");
+            const std::string wifi_text =
+                std::string("Wi-Fi:  ") + (net.ssid.empty() ? "configured" : net.ssid);
+            lv_obj_t* wifi = make_label(card, wifi_text.c_str(), color(0xC8D1DA));
+            lv_obj_set_pos(wifi, 0, 78);
+
+            const std::string ip_text =
+                std::string("IP:  ") + (net.ip.empty() ? "waiting for DHCP" : net.ip);
+            lv_obj_t* ip = make_label(card, ip_text.c_str(), color(0xC8D1DA));
+            lv_obj_set_pos(ip, 0, 120);
+
+            lv_obj_t* local_name = make_label(
+                card, "Local name:  deos.local", color(0x8E99A6));
+            lv_obj_set_pos(local_name, 0, 162);
         }
 
         lv_obj_t* later = make_action(
