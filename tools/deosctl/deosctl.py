@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
+import urllib.error
+import urllib.request
 from typing import Any
 
 
@@ -132,6 +135,110 @@ def plan(desired: dict[str, Any], actual: dict[str, Any]) -> list[tuple[str, str
     return result
 
 
+def normalize_device(value: str) -> str:
+    value = value.strip().rstrip("/")
+    if not value:
+        raise SystemExit("device address must not be empty")
+    if "://" not in value:
+        value = "http://" + value
+    if not value.startswith(("http://", "https://")):
+        raise SystemExit("device address must use http:// or https://")
+    return value
+
+
+def resolve_token(explicit: str | None) -> str:
+    token = explicit or os.environ.get("DEOS_TOKEN", "")
+    if not token:
+        raise SystemExit("DEOS API token required: pass --token or set DEOS_TOKEN")
+    return token
+
+
+def remote_request(
+    device: str,
+    path: str,
+    *,
+    method: str = "GET",
+    token: str | None = None,
+    body: bytes | None = None,
+    content_type: str | None = None,
+) -> bytes:
+    url = normalize_device(device) + path
+    headers = {"User-Agent": "deosctl/0.1"}
+    if token:
+        headers["X-DEOS-Token"] = token
+    if content_type:
+        headers["Content-Type"] = content_type
+
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"device returned HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise SystemExit(f"cannot reach {url}: {exc.reason}") from exc
+
+
+def print_json_response(payload: bytes) -> None:
+    text = payload.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        print(text)
+        return
+    print(json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def command_status(args: argparse.Namespace) -> int:
+    payload = remote_request(args.device, "/api/v1/status")
+    print_json_response(payload)
+    return 0
+
+
+def command_reboot(args: argparse.Namespace) -> int:
+    payload = remote_request(
+        args.device,
+        "/api/v1/reboot",
+        method="POST",
+        token=resolve_token(args.token),
+        body=b"",
+        content_type="application/octet-stream",
+    )
+    print_json_response(payload)
+    return 0
+
+
+def command_ota(args: argparse.Namespace) -> int:
+    firmware = pathlib.Path(args.firmware)
+    if not firmware.is_file():
+        raise SystemExit(f"firmware not found: {firmware}")
+
+    image = firmware.read_bytes()
+    if not image:
+        raise SystemExit("firmware image is empty")
+
+    print(
+        f"Uploading {firmware.name} ({len(image)} bytes) "
+        f"to {normalize_device(args.device)} ..."
+    )
+    payload = remote_request(
+        args.device,
+        "/api/v1/ota",
+        method="POST",
+        token=resolve_token(args.token),
+        body=image,
+        content_type="application/octet-stream",
+    )
+    print_json_response(payload)
+    return 0
+
+
 def command_validate(args: argparse.Namespace) -> int:
     doc = load_document(pathlib.Path(args.manifest))
     errors = validate(doc)
@@ -192,6 +299,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_normalize = sub.add_parser("normalize", help="emit canonical JSON")
     p_normalize.add_argument("manifest")
     p_normalize.set_defaults(func=command_normalize)
+
+    p_status = sub.add_parser("status", help="read live device status over LAN")
+    p_status.add_argument("--device", default="http://deos.local")
+    p_status.set_defaults(func=command_status)
+
+    p_reboot = sub.add_parser("reboot", help="reboot a DEOS device over LAN")
+    p_reboot.add_argument("--device", default="http://deos.local")
+    p_reboot.add_argument("--token", help="API token; defaults to DEOS_TOKEN")
+    p_reboot.set_defaults(func=command_reboot)
+
+    p_ota = sub.add_parser("ota", help="upload an application binary to the inactive A/B slot")
+    p_ota.add_argument("firmware")
+    p_ota.add_argument("--device", default="http://deos.local")
+    p_ota.add_argument("--token", help="API token; defaults to DEOS_TOKEN")
+    p_ota.set_defaults(func=command_ota)
     return parser
 
 
