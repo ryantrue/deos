@@ -34,10 +34,10 @@ public:
     httpd_handle_t server() const noexcept;
     bool connected() const noexcept;
     bool provisioning() const noexcept;
-    const std::string& ip() const noexcept;
-    const std::string& api_token() const noexcept;
-    const std::string& setup_ssid() const noexcept;
-    const std::string& setup_password() const noexcept;
+    std::string ip() const;
+    std::string api_token() const;
+    std::string setup_ssid() const;
+    std::string setup_password() const;
 
     NetworkSnapshot snapshot() const;
     bool forget_wifi_and_reboot();

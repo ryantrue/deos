@@ -150,6 +150,27 @@ struct NetworkController::Impl {
         }
     }
 
+    NetworkSnapshot snapshot_state() const {
+        NetworkSnapshot result;
+        lock_state();
+        result.initialized = initialized;
+        result.connected = is_connected;
+        result.provisioning = is_provisioning;
+        result.ssid = is_provisioning ? setup_ssid : stored_ssid;
+        result.ip = ip_address;
+        result.setup_ssid = setup_ssid;
+        result.setup_password = setup_password;
+        unlock_state();
+        return result;
+    }
+
+    std::string token_copy() const {
+        lock_state();
+        std::string copy = token;
+        unlock_state();
+        return copy;
+    }
+
     static void wifi_event(void* arg,
                            esp_event_base_t event_base,
                            int32_t event_id,
@@ -160,7 +181,8 @@ struct NetworkController::Impl {
         }
 
         if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-            ESP_LOGI(kTag, "station started, connecting to '%s'", self->stored_ssid.c_str());
+            const NetworkSnapshot state = self->snapshot_state();
+            ESP_LOGI(kTag, "station started, connecting to '%s'", state.ssid.c_str());
             (void)esp_wifi_connect();
             return;
         }
@@ -170,12 +192,13 @@ struct NetworkController::Impl {
             self->is_connected = false;
             self->ip_address.clear();
             self->unlock_state();
-            if (!self->is_provisioning && self->retry_count < kMaxRetries) {
+            const NetworkSnapshot state = self->snapshot_state();
+            if (!state.provisioning && self->retry_count < kMaxRetries) {
                 ++self->retry_count;
                 ESP_LOGW(kTag, "Wi-Fi disconnected, retry %d/%d",
                          self->retry_count, kMaxRetries);
                 (void)esp_wifi_connect();
-            } else if (!self->is_provisioning) {
+            } else if (!state.provisioning) {
                 ESP_LOGE(kTag, "Wi-Fi connection retries exhausted");
             }
             return;
@@ -190,7 +213,7 @@ struct NetworkController::Impl {
             self->is_connected = true;
             self->unlock_state();
             self->retry_count = 0;
-            ESP_LOGI(kTag, "Wi-Fi connected: %s", self->ip_address.c_str());
+            ESP_LOGI(kTag, "Wi-Fi connected: %s", ip);
         }
     }
 
@@ -222,21 +245,31 @@ struct NetworkController::Impl {
         nvs_handle_t nvs = 0;
         ESP_RETURN_ON_ERROR(nvs_open(kNvsNamespace, NVS_READWRITE, &nvs), kTag, "open NVS failed");
 
-        stored_ssid = read_string(nvs, kSsidKey);
-        stored_password = read_string(nvs, kPassKey);
-        token = read_string(nvs, kTokenKey);
+        std::string loaded_ssid = read_string(nvs, kSsidKey);
+        std::string loaded_password = read_string(nvs, kPassKey);
+        std::string loaded_token = read_string(nvs, kTokenKey);
 
-        if (token.empty()) {
-            token = hex_token();
-            const esp_err_t token_err = nvs_set_str(nvs, kTokenKey, token.c_str());
+        if (loaded_token.empty()) {
+            loaded_token = hex_token();
+            const esp_err_t token_err =
+                nvs_set_str(nvs, kTokenKey, loaded_token.c_str());
             if (token_err != ESP_OK) {
                 nvs_close(nvs);
                 return token_err;
             }
-            ESP_RETURN_ON_ERROR(nvs_commit(nvs), kTag, "commit API token failed");
+            ESP_RETURN_ON_ERROR(
+                nvs_commit(nvs),
+                kTag,
+                "commit API token failed");
         }
 
         nvs_close(nvs);
+
+        lock_state();
+        stored_ssid = std::move(loaded_ssid);
+        stored_password = std::move(loaded_password);
+        token = std::move(loaded_token);
+        unlock_state();
         return ESP_OK;
     }
 
@@ -260,8 +293,10 @@ struct NetworkController::Impl {
         nvs_close(nvs);
 
         if (err == ESP_OK) {
+            lock_state();
             stored_ssid.clear();
             stored_password.clear();
+            unlock_state();
         }
         return err;
     }
@@ -278,6 +313,13 @@ struct NetworkController::Impl {
             err = nvs_commit(nvs);
         }
         nvs_close(nvs);
+
+        if (err == ESP_OK) {
+            lock_state();
+            stored_ssid = ssid;
+            stored_password = password;
+            unlock_state();
+        }
         return err;
     }
 
@@ -286,18 +328,28 @@ struct NetworkController::Impl {
         ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_STA));
 
         char ssid[32]{};
-        std::snprintf(ssid, sizeof(ssid), "DEOS-SETUP-%02X%02X", mac[4], mac[5]);
-        setup_ssid = ssid;
+        std::snprintf(
+            ssid,
+            sizeof(ssid),
+            "DEOS-SETUP-%02X%02X",
+            mac[4],
+            mac[5]);
 
-        if (token.size() >= 12) {
-            setup_password = "deos-" + token.substr(0, 8);
-        } else {
-            setup_password = "deos-setup";
-        }
+        const std::string current_token = token_copy();
+        std::string password =
+            current_token.size() >= 12
+                ? "deos-" + current_token.substr(0, 8)
+                : "deos-setup";
+
+        lock_state();
+        setup_ssid = ssid;
+        setup_password = std::move(password);
+        unlock_state();
     }
 
     bool authorized(httpd_req_t* req) const {
-        if (token.empty()) {
+        const std::string expected = token_copy();
+        if (expected.empty()) {
             return false;
         }
 
@@ -312,7 +364,7 @@ struct NetworkController::Impl {
             return false;
         }
         supplied.resize(std::strlen(supplied.c_str()));
-        return supplied == token;
+        return supplied == expected;
     }
 
     static esp_err_t setup_page(httpd_req_t* req) {
@@ -381,6 +433,7 @@ struct NetworkController::Impl {
             return ESP_FAIL;
         }
 
+        const NetworkSnapshot state = self->snapshot_state();
         char json[512]{};
         std::snprintf(
             json,
@@ -388,10 +441,10 @@ struct NetworkController::Impl {
             "{\"device\":\"deos\",\"network\":{\"mode\":\"%s\","
             "\"connected\":%s,\"ip\":\"%s\",\"ssid\":\"%s\"},"
             "\"remote\":{\"ota\":true,\"auth\":\"token\"}}",
-            self->is_provisioning ? "setup-ap" : "station",
-            self->is_connected ? "true" : "false",
-            self->ip_address.c_str(),
-            self->is_provisioning ? self->setup_ssid.c_str() : self->stored_ssid.c_str());
+            state.provisioning ? "setup-ap" : "station",
+            state.connected ? "true" : "false",
+            state.ip.c_str(),
+            state.ssid.c_str());
 
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, json);
@@ -411,7 +464,7 @@ struct NetworkController::Impl {
 
     static esp_err_t root_page(httpd_req_t* req) {
         auto* self = static_cast<Impl*>(req->user_ctx);
-        if (self != nullptr && self->is_provisioning) {
+        if (self != nullptr && self->snapshot_state().provisioning) {
             return setup_page(req);
         }
 
@@ -484,8 +537,13 @@ struct NetworkController::Impl {
     }
 
     esp_err_t start_setup_ap() {
-        is_provisioning = true;
         derive_setup_credentials();
+
+        lock_state();
+        is_provisioning = true;
+        const std::string ap_ssid = setup_ssid;
+        const std::string ap_password = setup_password;
+        unlock_state();
 
         netif = esp_netif_create_default_wifi_ap();
         if (netif == nullptr) {
@@ -494,10 +552,10 @@ struct NetworkController::Impl {
 
         wifi_config_t config{};
         std::snprintf(reinterpret_cast<char*>(config.ap.ssid),
-                      sizeof(config.ap.ssid), "%s", setup_ssid.c_str());
+                      sizeof(config.ap.ssid), "%s", ap_ssid.c_str());
         std::snprintf(reinterpret_cast<char*>(config.ap.password),
-                      sizeof(config.ap.password), "%s", setup_password.c_str());
-        config.ap.ssid_len = static_cast<uint8_t>(setup_ssid.size());
+                      sizeof(config.ap.password), "%s", ap_password.c_str());
+        config.ap.ssid_len = static_cast<uint8_t>(ap_ssid.size());
         config.ap.channel = 1;
         config.ap.max_connection = 4;
         config.ap.authmode = WIFI_AUTH_WPA2_PSK;
@@ -506,16 +564,22 @@ struct NetworkController::Impl {
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &config), kTag, "set AP config failed");
         ESP_RETURN_ON_ERROR(esp_wifi_start(), kTag, "start setup AP failed");
 
+        lock_state();
         ip_address = "192.168.4.1";
+        unlock_state();
         ESP_LOGW(kTag, "No Wi-Fi profile found");
-        ESP_LOGW(kTag, "Setup AP: %s", setup_ssid.c_str());
-        ESP_LOGW(kTag, "Setup password: %s", setup_password.c_str());
+        ESP_LOGW(kTag, "Setup AP: %s", ap_ssid.c_str());
+        ESP_LOGW(kTag, "Setup password: %s", ap_password.c_str());
         ESP_LOGW(kTag, "Open http://192.168.4.1/ after connecting");
         return ESP_OK;
     }
 
     esp_err_t start_station() {
+        lock_state();
         is_provisioning = false;
+        const std::string station_ssid = stored_ssid;
+        const std::string station_password = stored_password;
+        unlock_state();
 
         netif = esp_netif_create_default_wifi_sta();
         if (netif == nullptr) {
@@ -535,16 +599,16 @@ struct NetworkController::Impl {
 
         wifi_config_t config{};
         std::snprintf(reinterpret_cast<char*>(config.sta.ssid),
-                      sizeof(config.sta.ssid), "%s", stored_ssid.c_str());
+                      sizeof(config.sta.ssid), "%s", station_ssid.c_str());
         std::snprintf(reinterpret_cast<char*>(config.sta.password),
-                      sizeof(config.sta.password), "%s", stored_password.c_str());
+                      sizeof(config.sta.password), "%s", station_password.c_str());
         config.sta.threshold.authmode = WIFI_AUTH_OPEN;
 
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), kTag, "set STA mode failed");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &config), kTag, "set STA config failed");
         ESP_RETURN_ON_ERROR(esp_wifi_start(), kTag, "start station failed");
 
-        ESP_LOGI(kTag, "Station profile loaded: %s", stored_ssid.c_str());
+        ESP_LOGI(kTag, "Station profile loaded: %s", station_ssid.c_str());
         return ESP_OK;
     }
 
@@ -579,18 +643,27 @@ struct NetworkController::Impl {
         ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_init), kTag, "Wi-Fi init failed");
         (void)esp_wifi_set_storage(WIFI_STORAGE_RAM);
 
-        if (stored_ssid.empty()) {
-            ESP_RETURN_ON_ERROR(start_setup_ap(), kTag, "setup AP failed");
+        if (snapshot_state().ssid.empty()) {
+            ESP_RETURN_ON_ERROR(
+                start_setup_ap(),
+                kTag,
+                "setup AP failed");
         } else {
-            ESP_RETURN_ON_ERROR(start_station(), kTag, "station start failed");
+            ESP_RETURN_ON_ERROR(
+                start_station(),
+                kTag,
+                "station start failed");
         }
 
         ESP_RETURN_ON_ERROR(start_http_server(), kTag, "control HTTP server failed");
         ESP_RETURN_ON_ERROR(start_mdns(), kTag, "mDNS start failed");
 
+        lock_state();
         initialized = true;
+        unlock_state();
 
-        ESP_LOGI(kTag, "DEOS API token: %s", token.c_str());
+        const std::string log_token = token_copy();
+        ESP_LOGI(kTag, "DEOS API token: %s", log_token.c_str());
         ESP_LOGI(kTag, "Control plane: http://deos.local/");
         return ESP_OK;
     }
@@ -617,14 +690,15 @@ ResourceStatus NetworkController::reconcile(const Resource&,
         };
     }
 
+    const NetworkSnapshot state = impl_->snapshot_state();
     return {
         Phase::Ready,
-        impl_->is_provisioning ? "Wi-Fi setup AP ready" : "Wi-Fi station active",
+        state.provisioning ? "Wi-Fi setup AP ready" : "Wi-Fi station active",
         {
             {"transport", "esp32c6-sdio"},
-            {"mode", impl_->is_provisioning ? "setup-ap" : "station"},
-            {"ssid", impl_->is_provisioning ? impl_->setup_ssid : impl_->stored_ssid},
-            {"ip", impl_->ip_address},
+            {"mode", state.provisioning ? "setup-ap" : "station"},
+            {"ssid", state.ssid},
+            {"ip", state.ip},
             {"control", "http://deos.local/"},
         }
     };
@@ -643,45 +717,36 @@ httpd_handle_t NetworkController::server() const noexcept {
 }
 
 bool NetworkController::connected() const noexcept {
-    return impl_->is_connected;
+    return impl_->snapshot_state().connected;
 }
 
 bool NetworkController::provisioning() const noexcept {
-    return impl_->is_provisioning;
+    return impl_->snapshot_state().provisioning;
 }
 
-const std::string& NetworkController::ip() const noexcept {
-    return impl_->ip_address;
+std::string NetworkController::ip() const {
+    return impl_->snapshot_state().ip;
 }
 
-const std::string& NetworkController::api_token() const noexcept {
-    return impl_->token;
+std::string NetworkController::api_token() const {
+    return impl_->token_copy();
 }
 
-const std::string& NetworkController::setup_ssid() const noexcept {
-    return impl_->setup_ssid;
+std::string NetworkController::setup_ssid() const {
+    return impl_->snapshot_state().setup_ssid;
 }
 
-const std::string& NetworkController::setup_password() const noexcept {
-    return impl_->setup_password;
+std::string NetworkController::setup_password() const {
+    return impl_->snapshot_state().setup_password;
 }
 
 NetworkSnapshot NetworkController::snapshot() const {
-    NetworkSnapshot result;
-    impl_->lock_state();
-    result.initialized = impl_->initialized;
-    result.connected = impl_->is_connected;
-    result.provisioning = impl_->is_provisioning;
-    result.ssid = impl_->is_provisioning ? impl_->setup_ssid : impl_->stored_ssid;
-    result.ip = impl_->ip_address;
-    result.setup_ssid = impl_->setup_ssid;
-    result.setup_password = impl_->setup_password;
-    impl_->unlock_state();
-    return result;
+    return impl_->snapshot_state();
 }
 
 bool NetworkController::forget_wifi_and_reboot() {
-    if (!impl_->initialized || impl_->is_provisioning) {
+    const NetworkSnapshot state = impl_->snapshot_state();
+    if (!state.initialized || state.provisioning) {
         return false;
     }
 

@@ -42,7 +42,7 @@ struct UpdateController::Impl {
         : network(network_controller) {}
 
     bool authorized(httpd_req_t* req) const {
-        const std::string& expected = network.api_token();
+        const std::string expected = network.api_token();
         if (expected.empty()) {
             return false;
         }
