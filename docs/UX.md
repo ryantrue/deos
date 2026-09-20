@@ -58,6 +58,7 @@ Home
     ├── Network
     ├── Display
     ├── Storage
+    ├── Software Update
     ├── About / System
     └── Developer  (hidden until enabled)
 ```
@@ -156,3 +157,17 @@ The Home surface is tile-centric:
 - tiles evolve into projections of State + Actions rather than static shortcuts.
 
 This gives DEOS its own product language while keeping the interaction model familiar.
+
+
+## Software update surface
+
+Settings exposes a read-only **Software Update** system surface. It shows:
+
+- current firmware build;
+- ESP-IDF version;
+- active OTA slot;
+- next inactive OTA slot;
+- rollback policy;
+- whether `Update/system` is currently Ready.
+
+The shell does not write flash directly. Developer uploads still flow through the `Update/system` resource/control-plane endpoint, and the UI only exposes system state and guidance.
