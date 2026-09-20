@@ -218,10 +218,13 @@ void test_entity_registry_type_safety_and_events() {
 void test_action_registry_invocation_and_capability() {
     deos::EventBus bus;
     int invoked = 0;
+    int failed = 0;
     bus.subscribe("action.invoked", [&](const deos::Event& event) {
         assert(event.data.at("id") == "display.brightness.set");
-        assert(event.data.at("ok") == "true");
         ++invoked;
+        if (event.data.at("ok") == "false") {
+            ++failed;
+        }
     });
 
     deos::ActionRegistry actions(&bus);
@@ -259,12 +262,14 @@ void test_action_registry_invocation_and_capability() {
     assert(result.ok);
     assert(applied == 64);
     assert(invoked == 1);
+    assert(failed == 0);
 
     const auto invalid = actions.invoke(
         "display.brightness.set",
         {{"value", std::string("64")}});
     assert(!invalid.ok);
-    assert(invoked == 1);
+    assert(invoked == 2);
+    assert(failed == 1);
 
     const auto unknown = actions.invoke("unknown.action");
     assert(!unknown.ok);
