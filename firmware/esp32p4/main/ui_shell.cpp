@@ -3,6 +3,7 @@
 #include "ui_shell.hpp"
 
 #include "network_controller.hpp"
+#include "resource_runtime.hpp"
 #include "storage_controller.hpp"
 
 #include "esp_app_desc.h"
@@ -70,18 +71,22 @@ std::string bytes_human(uint64_t bytes) {
 
 struct ShellUi::Impl {
     lv_display_t* display{nullptr};
+    platform::ResourceRuntime& resources;
     platform::NetworkController& network;
     platform::StorageController& storage;
     lv_timer_t* storage_timer{nullptr};
     lv_obj_t* storage_body{nullptr};
+    lv_obj_t* brightness_value_label{nullptr};
     std::string storage_render_key;
     int developer_taps{0};
     bool developer_mode{false};
 
     Impl(lv_display_t* display_handle,
+         platform::ResourceRuntime& resource_runtime,
          platform::NetworkController& network_controller,
          platform::StorageController& storage_controller)
         : display(display_handle),
+          resources(resource_runtime),
           network(network_controller),
           storage(storage_controller) {}
 
@@ -100,6 +105,7 @@ struct ShellUi::Impl {
 
     lv_obj_t* begin_screen(const char* title, bool show_back) {
         stop_storage_timer();
+        brightness_value_label = nullptr;
         lv_display_set_default(display);
 
         lv_obj_t* screen = lv_screen_active();
@@ -326,7 +332,8 @@ struct ShellUi::Impl {
         lv_obj_t* network_row = make_row(body, "Network", "Wi-Fi and local control plane");
         lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
 
-        make_row(body, "Display", "Brightness and sleep", false);
+        lv_obj_t* display_row = make_row(body, "Display", "Brightness and screen behavior");
+        lv_obj_add_event_cb(display_row, on_display, LV_EVENT_CLICKED, this);
 
         lv_obj_t* storage_row = make_row(body, "Storage", "SD card and DEOS volume");
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
@@ -511,6 +518,65 @@ struct ShellUi::Impl {
             "Developer Mode is intentionally separate from normal device UX.",
             color(0x6E7E89));
         lv_obj_set_pos(note, 28, 646);
+    }
+
+    int desired_brightness() const {
+        const std::string value = resources.desired_field(
+            {"Display", "primary"}, "brightness", "72");
+        char* end = nullptr;
+        const long parsed = std::strtol(value.c_str(), &end, 10);
+        if (end == value.c_str() || *end != '\0') {
+            return 72;
+        }
+        return static_cast<int>(std::clamp<long>(parsed, 10, 100));
+    }
+
+    void show_display() {
+        lv_obj_t* screen = begin_screen("Display", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 130);
+        lv_obj_set_size(card, 672, 360);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* heading = make_label(
+            card, "Brightness", color(0xF2F5F8), &lv_font_montserrat_20);
+        lv_obj_set_pos(heading, 0, 0);
+
+        const int brightness = desired_brightness();
+        char value_text[16]{};
+        std::snprintf(value_text, sizeof(value_text), "%d%%", brightness);
+        brightness_value_label = make_label(
+            card, value_text, color(0x7FB4FF), &lv_font_montserrat_28);
+        lv_obj_align(brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, -2);
+
+        lv_obj_t* slider = lv_slider_create(card);
+        lv_obj_set_pos(slider, 0, 86);
+        lv_obj_set_size(slider, 610, 30);
+        lv_slider_set_range(slider, 10, 100);
+        lv_slider_set_value(slider, brightness, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(slider, color(0x252B34), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(slider, color(0x4E8FE8), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(slider, color(0xE9EEF5), LV_PART_KNOB);
+        lv_obj_set_style_pad_all(slider, 10, LV_PART_KNOB);
+        lv_obj_add_event_cb(slider, on_brightness_value, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_add_event_cb(slider, on_brightness_commit, LV_EVENT_RELEASED, this);
+
+        lv_obj_t* note = make_label(
+            card,
+            "Brightness is applied through Display/primary desired state.\n"
+            "The 10% minimum prevents an accidental black-screen trap.",
+            color(0x7E8996));
+        lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(note, 610);
+        lv_obj_set_pos(note, 0, 158);
+
+        lv_obj_t* state = make_label(
+            card,
+            "Touch  →  Desired State  →  Reconciler  →  DisplayController",
+            color(0x66809F));
+        lv_obj_set_pos(state, 0, 266);
     }
 
     void show_system() {
@@ -785,6 +851,32 @@ struct ShellUi::Impl {
         self(event)->show_system();
     }
 
+    static void on_display(lv_event_t* event) {
+        self(event)->show_display();
+    }
+
+    static void on_brightness_value(lv_event_t* event) {
+        Impl* ui = self(event);
+        if (ui->brightness_value_label == nullptr) {
+            return;
+        }
+        lv_obj_t* slider = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        const int value = lv_slider_get_value(slider);
+        char text[16]{};
+        std::snprintf(text, sizeof(text), "%d%%", value);
+        lv_label_set_text(ui->brightness_value_label, text);
+    }
+
+    static void on_brightness_commit(lv_event_t* event) {
+        Impl* ui = self(event);
+        lv_obj_t* slider = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        const int value = lv_slider_get_value(slider);
+        (void)ui->resources.patch_spec(
+            {"Display", "primary"},
+            "brightness",
+            std::to_string(value));
+    }
+
     static void on_developer(lv_event_t* event) {
         self(event)->show_developer();
     }
@@ -858,9 +950,11 @@ struct ShellUi::Impl {
 };
 
 ShellUi::ShellUi(lv_display_t* display,
+                 platform::ResourceRuntime& resources,
                  platform::NetworkController& network,
                  platform::StorageController& storage)
-    : impl_(std::make_unique<Impl>(display, network, storage)) {}
+    : impl_(std::make_unique<Impl>(
+          display, resources, network, storage)) {}
 
 ShellUi::~ShellUi() = default;
 

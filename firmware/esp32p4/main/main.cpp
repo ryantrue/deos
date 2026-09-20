@@ -4,6 +4,7 @@
 #include "deos/core/reconciler.hpp"
 #include "display_controller.hpp"
 #include "network_controller.hpp"
+#include "resource_runtime.hpp"
 #include "shell_controller.hpp"
 #include "storage_controller.hpp"
 #include "touch_controller.hpp"
@@ -79,13 +80,14 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "DEOS ESP32-P4 interactive OS bring-up");
 
     static deos::Reconciler engine;
+    static deos::platform::ResourceRuntime resource_runtime(engine);
     static auto system_controller = std::make_shared<SystemController>();
     static auto display_controller = std::make_shared<deos::platform::DisplayController>();
     static auto storage_controller = std::make_shared<deos::platform::StorageController>();
     static auto network_controller = std::make_shared<deos::platform::NetworkController>();
     static auto shell_controller =
         std::make_shared<deos::platform::ShellController>(
-            *network_controller, *storage_controller);
+            resource_runtime, *network_controller, *storage_controller);
     static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto update_controller =
         std::make_shared<deos::platform::UpdateController>(*network_controller);

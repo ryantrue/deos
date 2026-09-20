@@ -4,6 +4,7 @@ idf_component_register(
         "display_controller.cpp"
         "i2c_runtime.cpp"
         "network_controller.cpp"
+        "resource_runtime.cpp"
         "shell_controller.cpp"
         "storage_controller.cpp"
         "touch_controller.cpp"

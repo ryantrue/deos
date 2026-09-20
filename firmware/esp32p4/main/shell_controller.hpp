@@ -13,11 +13,14 @@ class ShellUi;
 namespace deos::platform {
 
 class NetworkController;
+class ResourceRuntime;
 class StorageController;
 
 class ShellController final : public Controller {
 public:
-    ShellController(NetworkController& network, StorageController& storage);
+    ShellController(ResourceRuntime& resources,
+                    NetworkController& network,
+                    StorageController& storage);
     ~ShellController() override;
 
     bool supports(std::string_view kind) const override;
@@ -26,6 +29,7 @@ public:
     ResourceStatus remove(const AppliedResource& current) override;
 
 private:
+    ResourceRuntime& resources_;
     NetworkController& network_;
     StorageController& storage_;
     std::unique_ptr<ui::ShellUi> ui_;
