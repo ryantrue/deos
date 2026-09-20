@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "sdmmc_cmd.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
