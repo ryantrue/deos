@@ -2,6 +2,7 @@
 #pragma once
 
 #include "deos/core/controller.hpp"
+#include "deos/core/state.hpp"
 
 #include "esp_http_server.h"
 
@@ -23,7 +24,7 @@ struct NetworkSnapshot {
 
 class NetworkController final : public Controller {
 public:
-    NetworkController();
+    explicit NetworkController(EntityRegistry& entities);
     ~NetworkController() override;
 
     bool supports(std::string_view kind) const override;
