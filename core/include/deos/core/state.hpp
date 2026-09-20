@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -49,10 +50,11 @@ public:
 
     std::optional<EntitySnapshot> get(std::string_view id) const;
     std::vector<EntitySnapshot> list() const;
-    std::size_t size() const noexcept;
+    std::size_t size() const;
 
 private:
     EventBus* events_{nullptr};
+    mutable std::mutex mutex_;
     std::map<std::string, EntitySnapshot, std::less<>> entities_;
 };
 
