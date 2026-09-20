@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "deos/core/action.hpp"
+#include "deos/core/state.hpp"
+
 #include "lvgl.h"
 
 #include <memory>
@@ -17,6 +20,8 @@ namespace deos::ui {
 class ShellUi final {
 public:
     ShellUi(lv_display_t* display,
+            EntityRegistry& entities,
+            ActionRegistry& actions,
             platform::DevicePreferences& preferences,
             platform::ResourceRuntime& resources,
             platform::NetworkController& network,
