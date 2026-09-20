@@ -16,6 +16,7 @@
 #include "lvgl.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -239,6 +240,7 @@ struct ShellUi::Impl {
             color(0x14243B), color(0x285887));
         lv_obj_t* ai_hint = make_label(ai, "Provider not configured", color(0x68A9EA));
         lv_obj_set_pos(ai_hint, 0, 84);
+        lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
 
         lv_obj_t* system = make_tile(
             screen, 480, 112, col, "System", "Device health",
@@ -252,12 +254,14 @@ struct ShellUi::Impl {
             color(0x17251F), color(0x28573F));
         lv_obj_t* c = make_label(control, "0 entities", color(0x9EE2BB));
         lv_obj_set_pos(c, 0, 84);
+        lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
 
         lv_obj_t* automations = make_tile(
             screen, 252, 270, col, "Automations", "On-device rules",
             color(0x261E31), color(0x573A6E));
         lv_obj_t* a = make_label(automations, "0 active", color(0xD8B4EF));
         lv_obj_set_pos(a, 0, 84);
+        lv_obj_add_event_cb(automations, on_automations, LV_EVENT_CLICKED, this);
 
         const auto sd = storage.snapshot();
         lv_obj_t* files = make_tile(
@@ -277,6 +281,7 @@ struct ShellUi::Impl {
             color(0x1D1C1B), color(0x343330));
         lv_obj_t* app_count = make_label(apps, "6 system apps", color(0xA9B1BA));
         lv_obj_set_pos(app_count, 0, 84);
+        lv_obj_add_event_cb(apps, on_apps, LV_EVENT_CLICKED, this);
 
         lv_obj_t* settings = make_tile(
             screen, 252, 428, wide, "Settings", "Network, display, storage, developer",
@@ -293,7 +298,7 @@ struct ShellUi::Impl {
         set_panel_style(dock, color(0x10141A), color(0x242A32));
         lv_obj_set_style_pad_all(dock, 10, 0);
 
-        const char* dock_labels[] = {"HOME", "SEARCH", "AI", "APPS"};
+        const char* dock_labels[] = {"HOME", "CONTROL", "AI", "APPS"};
         for (int i = 0; i < 4; ++i) {
             lv_obj_t* item = lv_button_create(dock);
             lv_obj_set_pos(item, i * 160, 0);
@@ -308,6 +313,12 @@ struct ShellUi::Impl {
             lv_obj_center(text);
             if (i == 0) {
                 lv_obj_add_event_cb(item, on_home, LV_EVENT_CLICKED, this);
+            } else if (i == 1) {
+                lv_obj_add_event_cb(item, on_control, LV_EVENT_CLICKED, this);
+            } else if (i == 2) {
+                lv_obj_add_event_cb(item, on_ai, LV_EVENT_CLICKED, this);
+            } else {
+                lv_obj_add_event_cb(item, on_apps, LV_EVENT_CLICKED, this);
             }
         }
 
@@ -315,6 +326,115 @@ struct ShellUi::Impl {
         (void)control;
         (void)automations;
         (void)apps;
+    }
+
+    lv_obj_t* make_info_card(lv_obj_t* screen,
+                              const char* status,
+                              const char* title,
+                              const char* body,
+                              lv_color_t accent) {
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 126);
+        lv_obj_set_size(card, 672, 430);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* state = make_label(card, status, accent, &lv_font_montserrat_20);
+        lv_obj_set_pos(state, 0, 0);
+
+        lv_obj_t* heading = make_label(
+            card, title, color(0xF3F6F9), &lv_font_montserrat_28);
+        lv_obj_set_pos(heading, 0, 50);
+
+        lv_obj_t* detail = make_label(card, body, color(0x929EAA));
+        lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(detail, 610);
+        lv_obj_set_pos(detail, 0, 106);
+        return card;
+    }
+
+    void show_ai() {
+        lv_obj_t* screen = begin_screen("AI", true);
+        lv_obj_t* card = make_info_card(
+            screen,
+            "OPTIONAL",
+            "Intelligence is a service, not the OS.",
+            "DEOS is fully usable without a model. When a provider is configured, "
+            "AI will consume the same State + Actions interfaces as apps and "
+            "automations.\n\n"
+            "Planned providers: Qwen / OpenAI-compatible endpoints / local network "
+            "models. Models will receive capability-scoped Actions instead of raw "
+            "hardware access.",
+            color(0x73AFFF));
+
+        lv_obj_t* provider = make_label(
+            card, "Provider:  not configured", color(0xC8D5E6), &lv_font_montserrat_20);
+        lv_obj_set_pos(provider, 0, 312);
+    }
+
+    void show_control() {
+        lv_obj_t* screen = begin_screen("Control", true);
+        lv_obj_t* card = make_info_card(
+            screen,
+            "LOCAL-FIRST",
+            "State + Actions",
+            "Integrations and local hardware publish typed state into the entity "
+            "registry. UI, automations and AI consume the same model.\n\n"
+            "Examples: desk.light = on, room.temperature = 22.6 C, "
+            "music.play(), display.brightness.set().",
+            color(0x78D7A0));
+
+        lv_obj_t* entities = make_label(
+            card, "Entities   0", color(0xC9D7CF), &lv_font_montserrat_20);
+        lv_obj_set_pos(entities, 0, 304);
+        lv_obj_t* actions = make_label(
+            card, "Actions    0", color(0xC9D7CF), &lv_font_montserrat_20);
+        lv_obj_set_pos(actions, 220, 304);
+    }
+
+    void show_automations() {
+        lv_obj_t* screen = begin_screen("Automations", true);
+        lv_obj_t* card = make_info_card(
+            screen,
+            "ON-DEVICE",
+            "Rules run locally.",
+            "Automations will subscribe to entity changes, time and hardware events, "
+            "then invoke registered Actions. No cloud or AI is required.\n\n"
+            "The same Action registry will later be callable by AI, so deterministic "
+            "rules and model-driven behavior share one capability layer.",
+            color(0xD6A2F0));
+
+        lv_obj_t* rules = make_label(
+            card, "Active rules   0", color(0xD9C9E1), &lv_font_montserrat_20);
+        lv_obj_set_pos(rules, 0, 312);
+    }
+
+    void show_apps() {
+        lv_obj_t* screen = begin_screen("Apps", true);
+
+        lv_obj_t* body = lv_obj_create(screen);
+        lv_obj_set_pos(body, 24, kHeaderHeight);
+        lv_obj_set_size(body, 672, 574);
+        lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(body, 0, 0);
+        lv_obj_set_style_pad_all(body, 10, 0);
+        lv_obj_set_style_pad_row(body, 10, 0);
+        lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+
+        lv_obj_t* ai = make_row(body, "AI", "Optional model and assistant surface");
+        lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* control = make_row(body, "Control", "Entities and Actions");
+        lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* automations = make_row(body, "Automations", "Local event-action rules");
+        lv_obj_add_event_cb(automations, on_automations, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* storage_row = make_row(body, "Storage", "Internal and SD volume");
+        lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* settings = make_row(body, "Settings", "Device configuration");
+        lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
     }
 
     void show_settings() {
@@ -845,6 +965,22 @@ struct ShellUi::Impl {
 
     static void on_settings(lv_event_t* event) {
         self(event)->show_settings();
+    }
+
+    static void on_ai(lv_event_t* event) {
+        self(event)->show_ai();
+    }
+
+    static void on_control(lv_event_t* event) {
+        self(event)->show_control();
+    }
+
+    static void on_automations(lv_event_t* event) {
+        self(event)->show_automations();
+    }
+
+    static void on_apps(lv_event_t* event) {
+        self(event)->show_apps();
     }
 
     static void on_system(lv_event_t* event) {
