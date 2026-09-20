@@ -12,6 +12,9 @@ public:
     int brightness(int fallback) const;
     bool set_brightness(int value);
 
+    bool setup_completed() const;
+    bool set_setup_completed(bool completed);
+
 private:
     bool initialized_{false};
 };
