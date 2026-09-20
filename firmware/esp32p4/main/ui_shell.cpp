@@ -142,17 +142,29 @@ struct ShellUi::Impl {
         lv_obj_t* heading = make_label(screen, title, color(0xF5F7FA), &lv_font_montserrat_28);
         lv_obj_set_pos(heading, show_back ? 120 : kMargin, 23);
 
-        lv_obj_t* local = lv_obj_create(screen);
+        const platform::NetworkSnapshot net = network.snapshot();
+        const char* status_text =
+            net.provisioning ? "SETUP" : (net.connected ? "WIFI" : "LOCAL");
+        const lv_color_t status_bg =
+            net.provisioning ? color(0x302A14)
+                             : (net.connected ? color(0x14241C) : color(0x18202A));
+        const lv_color_t status_fg =
+            net.provisioning ? color(0xE8CE73)
+                             : (net.connected ? color(0x69D39A) : color(0x8DA3B8));
+
+        lv_obj_t* local = lv_button_create(screen);
         lv_obj_set_pos(local, 582, 18);
         lv_obj_set_size(local, 114, 42);
-        lv_obj_remove_flag(local, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_bg_color(local, color(0x14241C), 0);
+        lv_obj_set_style_bg_color(local, status_bg, 0);
         lv_obj_set_style_bg_opa(local, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(local, 0, 0);
         lv_obj_set_style_radius(local, 21, 0);
+        lv_obj_set_style_shadow_width(local, 0, 0);
         lv_obj_set_style_pad_all(local, 0, 0);
+        lv_obj_set_style_transform_scale(local, 248, LV_STATE_PRESSED);
+        lv_obj_add_event_cb(local, on_quick_settings, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* local_text = make_label(local, "LOCAL", color(0x69D39A));
+        lv_obj_t* local_text = make_label(local, status_text, status_fg);
         lv_obj_center(local_text);
 
         return screen;
@@ -661,6 +673,72 @@ struct ShellUi::Impl {
 
         lv_obj_t* settings = make_row(body, "Settings", "Device configuration");
         lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
+    }
+
+    void show_quick_settings() {
+        lv_obj_t* screen = begin_screen("Quick Settings", true);
+
+        lv_obj_t* brightness = lv_obj_create(screen);
+        lv_obj_set_pos(brightness, 24, 118);
+        lv_obj_set_size(brightness, 672, 190);
+        set_panel_style(brightness, color(0x11151A), color(0x2A313A));
+        lv_obj_set_style_pad_all(brightness, 24, 0);
+
+        lv_obj_t* title = make_label(
+            brightness, "Brightness", color(0xF2F5F8), &lv_font_montserrat_20);
+        lv_obj_set_pos(title, 0, 0);
+
+        const int value = desired_brightness();
+        char value_text[16]{};
+        std::snprintf(value_text, sizeof(value_text), "%d%%", value);
+        brightness_value_label = make_label(
+            brightness, value_text, color(0x7FB4FF), &lv_font_montserrat_28);
+        lv_obj_align(brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, -2);
+
+        lv_obj_t* slider = lv_slider_create(brightness);
+        lv_obj_set_pos(slider, 0, 88);
+        lv_obj_set_size(slider, 610, 30);
+        lv_slider_set_range(slider, 10, 100);
+        lv_slider_set_value(slider, value, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(slider, color(0x252B34), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(slider, color(0x4E8FE8), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(slider, color(0xE9EEF5), LV_PART_KNOB);
+        lv_obj_set_style_pad_all(slider, 10, LV_PART_KNOB);
+        lv_obj_add_event_cb(slider, on_brightness_value, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_add_event_cb(slider, on_brightness_commit, LV_EVENT_RELEASED, this);
+
+        const platform::NetworkSnapshot net = network.snapshot();
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+
+        lv_obj_t* network_button = make_tile(
+            screen, 24, 330, 216, "Network",
+            net.provisioning ? "Setup required"
+                             : (net.connected ? "Connected" : "Offline"),
+            color(0x151C24), color(0x2A3D52));
+        lv_obj_add_event_cb(network_button, on_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* storage_button = make_tile(
+            screen, 252, 330, 216, "Storage",
+            platform::to_string(sd.state),
+            color(0x201F16), color(0x4E4A29));
+        lv_obj_add_event_cb(storage_button, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* settings_button = make_tile(
+            screen, 480, 330, 216, "Settings",
+            "All controls",
+            color(0x191B20), color(0x30343C));
+        lv_obj_add_event_cb(settings_button, on_settings, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Quick Settings is system chrome; changes still flow through DEOS resources.",
+            color(0x697582));
+        lv_obj_set_pos(note, 24, 514);
+
+        lv_obj_t* home = make_action(
+            screen, "Home", color(0x20252D), color(0xE2E7ED), 672);
+        lv_obj_set_pos(home, 24, 584);
+        lv_obj_add_event_cb(home, on_home, LV_EVENT_CLICKED, this);
     }
 
     void show_settings() {
@@ -1203,6 +1281,10 @@ struct ShellUi::Impl {
 
     static void on_back(lv_event_t* event) {
         self(event)->show_home();
+    }
+
+    static void on_quick_settings(lv_event_t* event) {
+        self(event)->show_quick_settings();
     }
 
     static void on_settings(lv_event_t* event) {
