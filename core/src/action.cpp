@@ -2,16 +2,26 @@
 
 #include "deos/core/action.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace deos {
+
+bool ActionContext::has_capability(std::string_view capability) const {
+    if (capability.empty()) {
+        return true;
+    }
+    return std::find(capabilities.begin(), capabilities.end(), capability) !=
+               capabilities.end() ||
+           std::find(capabilities.begin(), capabilities.end(), "*") !=
+               capabilities.end();
+}
 
 ActionRegistry::ActionRegistry(EventBus* events) : events_(events) {}
 
 bool ActionRegistry::register_action(ActionDescriptor descriptor,
                                      Handler handler) {
-    if (descriptor.id.empty() || !handler ||
-        actions_.find(descriptor.id) != actions_.end()) {
+    if (descriptor.id.empty() || !handler) {
         return false;
     }
     if (descriptor.name.empty()) {
@@ -20,12 +30,19 @@ bool ActionRegistry::register_action(ActionDescriptor descriptor,
 
     const std::string id = descriptor.id;
     const std::string capability = descriptor.capability;
-    actions_.emplace(
-        id,
-        Entry{
-            std::move(descriptor),
-            std::move(handler),
-        });
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (actions_.find(id) != actions_.end()) {
+            return false;
+        }
+        actions_.emplace(
+            id,
+            Entry{
+                std::move(descriptor),
+                std::move(handler),
+            });
+    }
 
     if (events_ != nullptr) {
         events_->publish({
@@ -40,13 +57,17 @@ bool ActionRegistry::register_action(ActionDescriptor descriptor,
 }
 
 bool ActionRegistry::unregister_action(std::string_view id) {
-    const auto it = actions_.find(id);
-    if (it == actions_.end()) {
-        return false;
+    std::string key;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = actions_.find(id);
+        if (it == actions_.end()) {
+            return false;
+        }
+        key = it->first;
+        actions_.erase(it);
     }
 
-    const std::string key = it->first;
-    actions_.erase(it);
     if (events_ != nullptr) {
         events_->publish({"action.removed", {{"id", key}}});
     }
@@ -55,6 +76,7 @@ bool ActionRegistry::unregister_action(std::string_view id) {
 
 std::optional<ActionDescriptor> ActionRegistry::describe(
     std::string_view id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto it = actions_.find(id);
     if (it == actions_.end()) {
         return std::nullopt;
@@ -63,6 +85,7 @@ std::optional<ActionDescriptor> ActionRegistry::describe(
 }
 
 std::vector<ActionDescriptor> ActionRegistry::list() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<ActionDescriptor> result;
     result.reserve(actions_.size());
     for (const auto& [id, entry] : actions_) {
@@ -72,23 +95,59 @@ std::vector<ActionDescriptor> ActionRegistry::list() const {
     return result;
 }
 
-std::size_t ActionRegistry::size() const noexcept {
+std::size_t ActionRegistry::size() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return actions_.size();
 }
 
 ActionResult ActionRegistry::invoke(std::string_view id,
+                                    const ActionContext& context,
                                     const StateValues& arguments) const {
-    const auto it = actions_.find(id);
-    if (it == actions_.end()) {
-        return {false, "unknown action", {}};
+    ActionDescriptor descriptor;
+    Handler handler;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = actions_.find(id);
+        if (it == actions_.end()) {
+            const ActionResult result{false, "unknown action", {}};
+            if (events_ != nullptr) {
+                events_->publish({
+                    "action.invoked",
+                    {
+                        {"id", std::string(id)},
+                        {"actor", context.actor},
+                        {"capability", ""},
+                        {"ok", "false"},
+                        {"message", result.message},
+                    },
+                });
+            }
+            return result;
+        }
+
+        descriptor = it->second.descriptor;
+        handler = it->second.handler;
     }
 
-    ActionResult result = it->second.handler(arguments);
+    ActionResult result;
+    if (!context.has_capability(descriptor.capability)) {
+        result = {
+            false,
+            "capability denied: " + descriptor.capability,
+            {},
+        };
+    } else {
+        result = handler(arguments);
+    }
+
     if (events_ != nullptr) {
         events_->publish({
             "action.invoked",
             {
-                {"id", it->first},
+                {"id", descriptor.id},
+                {"actor", context.actor},
+                {"capability", descriptor.capability},
                 {"ok", result.ok ? "true" : "false"},
                 {"message", result.message},
             },
