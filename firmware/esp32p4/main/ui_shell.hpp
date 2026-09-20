@@ -3,8 +3,27 @@
 
 #include "lvgl.h"
 
+#include <memory>
+
+namespace deos::platform {
+class StorageController;
+}
+
 namespace deos::ui {
 
-void create_home_shell(lv_display_t* display);
+class ShellUi final {
+public:
+    ShellUi(lv_display_t* display, platform::StorageController& storage);
+    ~ShellUi();
+
+    ShellUi(const ShellUi&) = delete;
+    ShellUi& operator=(const ShellUi&) = delete;
+
+    void create();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace deos::ui

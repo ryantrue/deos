@@ -5,6 +5,7 @@ idf_component_register(
         "i2c_runtime.cpp"
         "network_controller.cpp"
         "shell_controller.cpp"
+        "storage_controller.cpp"
         "touch_controller.cpp"
         "ui_runtime.cpp"
         "ui_shell.cpp"
@@ -14,17 +15,22 @@ idf_component_register(
         deos_core
         freertos
         app_update
+        esp_app_format
         esp_driver_i2c
         esp_driver_ledc
+        esp_driver_sdmmc
         esp_event
         esp_http_server
         esp_hw_support
         esp_lcd
         esp_netif
+        esp_system
         esp_timer
         esp_wifi
+        fatfs
         heap
         nvs_flash
+        sdmmc
         lvgl
         esp_lcd_st7703
         esp_lcd_touch_gt911

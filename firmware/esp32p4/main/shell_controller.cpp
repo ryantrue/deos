@@ -3,6 +3,7 @@
 #include "shell_controller.hpp"
 
 #include "esp_log.h"
+#include "storage_controller.hpp"
 #include "ui_runtime.hpp"
 #include "ui_shell.hpp"
 
@@ -12,6 +13,11 @@ namespace deos::platform {
 namespace {
 constexpr char kTag[] = "deos-shell";
 }
+
+ShellController::ShellController(StorageController& storage)
+    : storage_(storage) {}
+
+ShellController::~ShellController() = default;
 
 bool ShellController::supports(std::string_view kind) const {
     return kind == "Shell";
@@ -24,15 +30,15 @@ ResourceStatus ShellController::reconcile(const Resource& desired,
         return {Phase::Waiting, "UI runtime is not ready", {}};
     }
 
-    if (!created_) {
+    if (!ui_) {
         ui::UiLock lock(runtime);
         if (!lock.locked()) {
             return {Phase::Waiting, "LVGL runtime is busy", {}};
         }
 
-        ESP_LOGI(kTag, "Creating Shell/home");
-        ui::create_home_shell(runtime.display());
-        created_ = true;
+        ESP_LOGI(kTag, "Creating interactive Shell/home");
+        ui_ = std::make_unique<ui::ShellUi>(runtime.display(), storage_);
+        ui_->create();
     }
 
     std::string layout = "adaptive-tiles";
@@ -41,20 +47,25 @@ ResourceStatus ShellController::reconcile(const Resource& desired,
         layout = layout_it->second;
     }
 
-    return {Phase::Ready,
-            "home shell ready",
-            {
-                {"layout", layout},
-                {"chrome", "mobile"},
-                {"tiles", "live-ready"},
-                {"theme", "dark"},
-            }};
+    return {
+        Phase::Ready,
+        "interactive home shell ready",
+        {
+            {"layout", layout},
+            {"chrome", "mobile"},
+            {"navigation", "touch"},
+            {"settings", "system+storage"},
+            {"theme", "dark"},
+        }
+    };
 }
 
 ResourceStatus ShellController::remove(const AppliedResource&) {
-    return {Phase::Error,
-            "hot shell removal is not implemented yet",
-            {}};
+    return {
+        Phase::Error,
+        "hot shell removal is not implemented yet",
+        {}
+    };
 }
 
 }  // namespace deos::platform

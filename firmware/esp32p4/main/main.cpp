@@ -5,6 +5,7 @@
 #include "display_controller.hpp"
 #include "network_controller.hpp"
 #include "shell_controller.hpp"
+#include "storage_controller.hpp"
 #include "touch_controller.hpp"
 #include "update_controller.hpp"
 
@@ -75,12 +76,14 @@ void validate_ota_if_healthy(const deos::Reconciler& engine) {
 }  // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "DEOS ESP32-P4 control + OTA bring-up");
+    ESP_LOGI(TAG, "DEOS ESP32-P4 interactive OS bring-up");
 
     static deos::Reconciler engine;
     static auto system_controller = std::make_shared<SystemController>();
     static auto display_controller = std::make_shared<deos::platform::DisplayController>();
-    static auto shell_controller = std::make_shared<deos::platform::ShellController>();
+    static auto storage_controller = std::make_shared<deos::platform::StorageController>();
+    static auto shell_controller =
+        std::make_shared<deos::platform::ShellController>(*storage_controller);
     static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto network_controller = std::make_shared<deos::platform::NetworkController>();
     static auto update_controller =
@@ -88,6 +91,7 @@ extern "C" void app_main(void) {
 
     engine.register_controller(system_controller);
     engine.register_controller(display_controller);
+    engine.register_controller(storage_controller);
     engine.register_controller(shell_controller);
     engine.register_controller(touch_controller);
     engine.register_controller(network_controller);
@@ -114,6 +118,16 @@ extern "C" void app_main(void) {
         {{"System", "device"}}
     };
 
+    desired[{"Storage", "sd"}] = {
+        {"Storage", "sd"},
+        {
+            {"mount", "/sdcard"},
+            {"policy", "never-auto-format"},
+            {"volume-marker", "DEOS/.volume"},
+        },
+        {{"Display", "primary"}}
+    };
+
     desired[{"Shell", "home"}] = {
         {"Shell", "home"},
         {
@@ -121,7 +135,10 @@ extern "C" void app_main(void) {
             {"chrome", "mobile"},
             {"theme", "dark"},
         },
-        {{"Display", "primary"}}
+        {
+            {"Display", "primary"},
+            {"Storage", "sd"},
+        }
     };
 
     desired[{"Input", "touch"}] = {
@@ -160,7 +177,7 @@ extern "C" void app_main(void) {
     }
 
     engine.apply(std::move(desired));
-    const auto operations = engine.run_until_idle(96);
+    const auto operations = engine.run_until_idle(128);
     ESP_LOGI(TAG, "reconciliation complete: %u operation(s)",
              static_cast<unsigned>(operations));
 
