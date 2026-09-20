@@ -2,6 +2,7 @@
 #pragma once
 
 #include "deos/core/controller.hpp"
+#include "deos/core/state.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -33,7 +34,7 @@ const char* to_string(SdVolumeState state) noexcept;
 
 class StorageController final : public Controller {
 public:
-    StorageController();
+    explicit StorageController(EntityRegistry& entities);
     ~StorageController() override;
 
     bool supports(std::string_view kind) const override;
