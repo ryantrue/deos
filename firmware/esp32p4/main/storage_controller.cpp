@@ -5,6 +5,7 @@
 #include "driver/sdmmc_host.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
 #include "diskio_sdmmc.h"
@@ -296,7 +297,8 @@ struct StorageController::Impl {
 
         const size_t sector_size = static_cast<size_t>(target->csd.sector_size);
         const size_t sector_count = static_cast<size_t>(target->csd.capacity);
-        auto* zero = static_cast<uint8_t*>(std::calloc(1, sector_size));
+        auto* zero = static_cast<uint8_t*>(
+            heap_caps_calloc(1, sector_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
         if (zero == nullptr) {
             return ESP_ERR_NO_MEM;
         }
@@ -307,7 +309,7 @@ struct StorageController::Impl {
         for (size_t sector = 0; sector < head_count; ++sector) {
             const esp_err_t err = sdmmc_write_sectors(target, zero, sector, 1);
             if (err != ESP_OK) {
-                std::free(zero);
+                heap_caps_free(zero);
                 ESP_LOGE(kTag, "failed clearing SD metadata sector %u: %s",
                          static_cast<unsigned>(sector), esp_err_to_name(err));
                 return err;
@@ -320,7 +322,7 @@ struct StorageController::Impl {
             for (size_t sector = tail_start; sector < sector_count; ++sector) {
                 const esp_err_t err = sdmmc_write_sectors(target, zero, sector, 1);
                 if (err != ESP_OK) {
-                    std::free(zero);
+                    heap_caps_free(zero);
                     ESP_LOGE(kTag, "failed clearing SD tail metadata sector %u: %s",
                              static_cast<unsigned>(sector), esp_err_to_name(err));
                     return err;
@@ -328,7 +330,7 @@ struct StorageController::Impl {
             }
         }
 
-        std::free(zero);
+        heap_caps_free(zero);
         ESP_LOGI(kTag, "Cleared stale MBR/GPT metadata areas");
         return ESP_OK;
     }
