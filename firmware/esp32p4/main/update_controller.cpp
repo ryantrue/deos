@@ -4,6 +4,7 @@
 
 #include "network_controller.hpp"
 
+#include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -13,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -165,12 +167,11 @@ struct UpdateController::Impl {
             return ESP_ERR_INVALID_STATE;
         }
 
-        const httpd_uri_t ota{
-            .uri = "/api/v1/ota",
-            .method = HTTP_POST,
-            .handler = ota_handler,
-            .user_ctx = this,
-        };
+        httpd_uri_t ota{};
+        ota.uri = "/api/v1/ota";
+        ota.method = HTTP_POST;
+        ota.handler = ota_handler;
+        ota.user_ctx = this;
 
         ESP_RETURN_ON_ERROR(
             httpd_register_uri_handler(network.server(), &ota),
