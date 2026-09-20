@@ -2,6 +2,7 @@
 
 #include "network_controller.hpp"
 
+#include "esp_check.h"
 #include "esp_event.h"
 #include "esp_hosted.h"
 #include "esp_log.h"
@@ -379,44 +380,39 @@ struct NetworkController::Impl {
         config.max_uri_handlers = 12;
         ESP_RETURN_ON_ERROR(httpd_start(&server, &config), kTag, "HTTP server start failed");
 
-        const httpd_uri_t root{
-            .uri = "/",
-            .method = HTTP_GET,
-            .handler = root_page,
-            .user_ctx = this,
-        };
+        httpd_uri_t root{};
+        root.uri = "/";
+        root.method = HTTP_GET;
+        root.handler = root_page;
+        root.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), kTag, "register root failed");
 
-        const httpd_uri_t setup_get{
-            .uri = "/setup",
-            .method = HTTP_GET,
-            .handler = setup_page,
-            .user_ctx = this,
-        };
+        httpd_uri_t setup_get{};
+        setup_get.uri = "/setup";
+        setup_get.method = HTTP_GET;
+        setup_get.handler = setup_page;
+        setup_get.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &setup_get), kTag, "register setup GET failed");
 
-        const httpd_uri_t setup_post{
-            .uri = "/setup",
-            .method = HTTP_POST,
-            .handler = setup_submit,
-            .user_ctx = this,
-        };
+        httpd_uri_t setup_post{};
+        setup_post.uri = "/setup";
+        setup_post.method = HTTP_POST;
+        setup_post.handler = setup_submit;
+        setup_post.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &setup_post), kTag, "register setup POST failed");
 
-        const httpd_uri_t status{
-            .uri = "/api/v1/status",
-            .method = HTTP_GET,
-            .handler = status_api,
-            .user_ctx = this,
-        };
+        httpd_uri_t status{};
+        status.uri = "/api/v1/status";
+        status.method = HTTP_GET;
+        status.handler = status_api;
+        status.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &status), kTag, "register status API failed");
 
-        const httpd_uri_t reboot{
-            .uri = "/api/v1/reboot",
-            .method = HTTP_POST,
-            .handler = reboot_api,
-            .user_ctx = this,
-        };
+        httpd_uri_t reboot{};
+        reboot.uri = "/api/v1/reboot";
+        reboot.method = HTTP_POST;
+        reboot.handler = reboot_api;
+        reboot.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &reboot), kTag, "register reboot API failed");
 
         return ESP_OK;
@@ -447,7 +443,7 @@ struct NetworkController::Impl {
                       sizeof(config.ap.ssid), "%s", setup_ssid.c_str());
         std::snprintf(reinterpret_cast<char*>(config.ap.password),
                       sizeof(config.ap.password), "%s", setup_password.c_str());
-        config.ap.ssid_len = setup_ssid.size();
+        config.ap.ssid_len = static_cast<uint8_t>(setup_ssid.size());
         config.ap.channel = 1;
         config.ap.max_connection = 4;
         config.ap.authmode = WIFI_AUTH_WPA2_PSK;
