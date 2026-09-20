@@ -64,9 +64,12 @@ std::string card_display_name(const sdmmc_card_t* card) {
         return {};
     }
     char name[32]{};
+    const uint64_t bytes =
+        static_cast<uint64_t>(card->csd.capacity) *
+        static_cast<uint64_t>(card->csd.sector_size);
     std::snprintf(name, sizeof(name), "%s %llu MB",
                   card->cid.name,
-                  static_cast<unsigned long long>(card->csd.capacity / 2048ULL));
+                  static_cast<unsigned long long>(bytes / (1024ULL * 1024ULL)));
     return name;
 }
 
