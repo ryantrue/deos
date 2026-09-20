@@ -576,8 +576,7 @@ struct ShellUi::Impl {
                 storage_body, "Format instead...", color(0x3A2023), color(0xF1A5AB), 612);
             lv_obj_set_pos(format, 0, y);
             lv_obj_add_event_cb(format, on_format_confirm, LV_EVENT_CLICKED, this);
-        } else if (sd.state == platform::SdVolumeState::NeedsFormat ||
-                   sd.state == platform::SdVolumeState::Error) {
+        } else if (sd.state == platform::SdVolumeState::NeedsFormat) {
             lv_obj_t* warning = make_label(
                 storage_body,
                 "DEOS will never format this card automatically.",
@@ -589,6 +588,20 @@ struct ShellUi::Impl {
                 storage_body, "Format for DEOS...", color(0x7A2830), color(0xFFFFFF), 612);
             lv_obj_set_pos(format, 0, y);
             lv_obj_add_event_cb(format, on_format_confirm, LV_EVENT_CLICKED, this);
+        } else if (sd.state == platform::SdVolumeState::Error) {
+            lv_obj_t* warning = make_label(
+                storage_body,
+                "The card was not classified safely. DEOS will not offer formatting.",
+                color(0xF1A5AB));
+            lv_label_set_long_mode(warning, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(warning, 610);
+            lv_obj_set_pos(warning, 0, y);
+            y += 72;
+
+            lv_obj_t* retry = make_action(
+                storage_body, "Rescan", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, y);
+            lv_obj_add_event_cb(retry, on_rescan_sd, LV_EVENT_CLICKED, this);
         } else if (sd.state == platform::SdVolumeState::Ready) {
             lv_obj_t* ready = make_label(
                 storage_body,
@@ -601,11 +614,17 @@ struct ShellUi::Impl {
         } else if (sd.state == platform::SdVolumeState::Absent) {
             lv_obj_t* hint = make_label(
                 storage_body,
-                "Insert a microSD card and reboot for this first implementation.",
+                "Insert a microSD card, then ask DEOS to scan the slot again.",
                 color(0x737F8C));
             lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
             lv_obj_set_width(hint, 610);
             lv_obj_set_pos(hint, 0, y);
+            y += 72;
+
+            lv_obj_t* retry = make_action(
+                storage_body, "Rescan SD card", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, y);
+            lv_obj_add_event_cb(retry, on_rescan_sd, LV_EVENT_CLICKED, this);
         } else if (sd.state == platform::SdVolumeState::Busy) {
             lv_obj_t* progress = lv_spinner_create(storage_body);
             lv_obj_set_size(progress, 58, 58);
@@ -721,6 +740,12 @@ struct ShellUi::Impl {
 
     static void on_storage(lv_event_t* event) {
         self(event)->show_storage();
+    }
+
+    static void on_rescan_sd(lv_event_t* event) {
+        Impl* ui = self(event);
+        (void)ui->storage.request_rescan();
+        ui->show_storage();
     }
 
     static void on_initialize_sd(lv_event_t* event) {
