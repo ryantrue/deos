@@ -111,6 +111,7 @@ std::string form_value(std::string_view body, std::string_view key) {
 
 struct NetworkController::Impl {
     NetworkController* owner{nullptr};
+    mutable SemaphoreHandle_t state_mutex{nullptr};
     httpd_handle_t server{nullptr};
     esp_netif_t* netif{nullptr};
     esp_event_handler_instance_t wifi_handler{nullptr};
@@ -125,6 +126,28 @@ struct NetworkController::Impl {
     bool is_connected{false};
     bool is_provisioning{false};
     int retry_count{0};
+
+    Impl() {
+        state_mutex = xSemaphoreCreateMutex();
+    }
+
+    ~Impl() {
+        if (state_mutex != nullptr) {
+            vSemaphoreDelete(state_mutex);
+        }
+    }
+
+    void lock_state() const {
+        if (state_mutex != nullptr) {
+            (void)xSemaphoreTake(state_mutex, portMAX_DELAY);
+        }
+    }
+
+    void unlock_state() const {
+        if (state_mutex != nullptr) {
+            (void)xSemaphoreGive(state_mutex);
+        }
+    }
 
     static void wifi_event(void* arg,
                            esp_event_base_t event_base,
@@ -142,8 +165,10 @@ struct NetworkController::Impl {
         }
 
         if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            self->lock_state();
             self->is_connected = false;
             self->ip_address.clear();
+            self->unlock_state();
             if (!self->is_provisioning && self->retry_count < kMaxRetries) {
                 ++self->retry_count;
                 ESP_LOGW(kTag, "Wi-Fi disconnected, retry %d/%d",
@@ -159,8 +184,10 @@ struct NetworkController::Impl {
             const auto* event = static_cast<const ip_event_got_ip_t*>(event_data);
             char ip[16]{};
             std::snprintf(ip, sizeof(ip), IPSTR, IP2STR(&event->ip_info.ip));
+            self->lock_state();
             self->ip_address = ip;
             self->is_connected = true;
+            self->unlock_state();
             self->retry_count = 0;
             ESP_LOGI(kTag, "Wi-Fi connected: %s", self->ip_address.c_str());
         }
@@ -210,6 +237,32 @@ struct NetworkController::Impl {
 
         nvs_close(nvs);
         return ESP_OK;
+    }
+
+    esp_err_t clear_wifi_profile() {
+        nvs_handle_t nvs = 0;
+        ESP_RETURN_ON_ERROR(nvs_open(kNvsNamespace, NVS_READWRITE, &nvs), kTag, "open NVS failed");
+
+        esp_err_t err = nvs_erase_key(nvs, kSsidKey);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
+        if (err == ESP_OK) {
+            esp_err_t pass_err = nvs_erase_key(nvs, kPassKey);
+            if (pass_err != ESP_OK && pass_err != ESP_ERR_NVS_NOT_FOUND) {
+                err = pass_err;
+            }
+        }
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+
+        if (err == ESP_OK) {
+            stored_ssid.clear();
+            stored_password.clear();
+        }
+        return err;
     }
 
     esp_err_t save_wifi(const std::string& ssid, const std::string& password) {
@@ -612,4 +665,35 @@ const std::string& NetworkController::setup_password() const noexcept {
     return impl_->setup_password;
 }
 
+NetworkSnapshot NetworkController::snapshot() const {
+    NetworkSnapshot result;
+    impl_->lock_state();
+    result.initialized = impl_->initialized;
+    result.connected = impl_->is_connected;
+    result.provisioning = impl_->is_provisioning;
+    result.ssid = impl_->is_provisioning ? impl_->setup_ssid : impl_->stored_ssid;
+    result.ip = impl_->ip_address;
+    result.setup_ssid = impl_->setup_ssid;
+    result.setup_password = impl_->setup_password;
+    impl_->unlock_state();
+    return result;
+}
+
+bool NetworkController::forget_wifi_and_reboot() {
+    if (!impl_->initialized || impl_->is_provisioning) {
+        return false;
+    }
+
+    const esp_err_t err = impl_->clear_wifi_profile();
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "forget Wi-Fi profile failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGW(kTag, "Wi-Fi profile removed; rebooting into provisioning");
+    return xTaskCreate(restart_task, "deos-net-reset", 2048, nullptr, 5, nullptr) == pdPASS;
+}
+
 }  // namespace deos::platform
+
+
