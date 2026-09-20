@@ -219,7 +219,12 @@ void test_action_registry_invocation_and_capability() {
     deos::EventBus bus;
     int invoked = 0;
     int failed = 0;
+    int unknown_events = 0;
     bus.subscribe("action.invoked", [&](const deos::Event& event) {
+        if (event.data.at("id") == "unknown.action") {
+            ++unknown_events;
+            return;
+        }
         assert(event.data.at("id") == "display.brightness.set");
         ++invoked;
         if (event.data.at("ok") == "false") {
@@ -256,23 +261,46 @@ void test_action_registry_invocation_and_capability() {
     assert(descriptor->capability == "display.control");
     assert(descriptor->parameters.size() == 1);
 
+    const deos::ActionContext untrusted{"ai.qwen", {}};
+    const auto denied = actions.invoke(
+        "display.brightness.set",
+        untrusted,
+        {{"value", static_cast<std::int64_t>(64)}});
+    assert(!denied.ok);
+    assert(applied == 0);
+    assert(invoked == 1);
+    assert(failed == 1);
+
+    const deos::ActionContext shell{"shell", {"display.control"}};
     const auto result = actions.invoke(
         "display.brightness.set",
+        shell,
         {{"value", static_cast<std::int64_t>(64)}});
     assert(result.ok);
     assert(applied == 64);
-    assert(invoked == 1);
-    assert(failed == 0);
-
-    const auto invalid = actions.invoke(
-        "display.brightness.set",
-        {{"value", std::string("64")}});
-    assert(!invalid.ok);
     assert(invoked == 2);
     assert(failed == 1);
 
-    const auto unknown = actions.invoke("unknown.action");
+    const auto invalid = actions.invoke(
+        "display.brightness.set",
+        shell,
+        {{"value", std::string("64")}});
+    assert(!invalid.ok);
+    assert(invoked == 3);
+    assert(failed == 2);
+
+    const deos::ActionContext system{"system", {"*"}};
+    const auto wildcard = actions.invoke(
+        "display.brightness.set",
+        system,
+        {{"value", static_cast<std::int64_t>(70)}});
+    assert(wildcard.ok);
+    assert(applied == 70);
+    assert(invoked == 4);
+
+    const auto unknown = actions.invoke("unknown.action", shell);
     assert(!unknown.ok);
+    assert(unknown_events == 1);
 
     assert(actions.unregister_action("display.brightness.set"));
     assert(actions.size() == 0);
