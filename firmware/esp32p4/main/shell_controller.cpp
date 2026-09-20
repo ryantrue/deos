@@ -3,6 +3,7 @@
 #include "shell_controller.hpp"
 
 #include "esp_log.h"
+#include "device_preferences.hpp"
 #include "network_controller.hpp"
 #include "resource_runtime.hpp"
 #include "storage_controller.hpp"
@@ -16,10 +17,14 @@ namespace {
 constexpr char kTag[] = "deos-shell";
 }
 
-ShellController::ShellController(ResourceRuntime& resources,
+ShellController::ShellController(DevicePreferences& preferences,
+                                 ResourceRuntime& resources,
                                  NetworkController& network,
                                  StorageController& storage)
-    : resources_(resources), network_(network), storage_(storage) {}
+    : preferences_(preferences),
+      resources_(resources),
+      network_(network),
+      storage_(storage) {}
 
 ShellController::~ShellController() = default;
 
@@ -42,7 +47,7 @@ ResourceStatus ShellController::reconcile(const Resource& desired,
 
         ESP_LOGI(kTag, "Creating interactive Shell/home");
         ui_ = std::make_unique<ui::ShellUi>(
-            runtime.display(), resources_, network_, storage_);
+            runtime.display(), preferences_, resources_, network_, storage_);
         ui_->create();
     }
 
