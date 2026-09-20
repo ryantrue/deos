@@ -713,7 +713,8 @@ struct ShellUi::Impl {
 
         lv_obj_t* detail = make_label(
             warning,
-            "DEOS will create a FAT volume and then initialize:\n\n"
+            "DEOS will replace the card layout with one partition using the\n"
+            "whole card, create a FAT volume, then initialize:\n\n"
             "DEOS/Apps, AppData, Packages, Backups, Logs\n"
             "Media/Music, Pictures, Video\n"
             "Documents and Downloads\n\n"
