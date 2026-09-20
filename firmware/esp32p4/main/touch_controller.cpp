@@ -83,9 +83,16 @@ struct TouchController::Impl {
 
         ESP_LOGI(kTag, "GT911 found at 0x%02X", address);
 
-        esp_lcd_panel_io_i2c_config_t io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+        // Do not use ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG() directly here:
+        // it is a C designated-initializer macro and IDF builds this C++ TU
+        // with -Werror=missing-field-initializers.
+        esp_lcd_panel_io_i2c_config_t io_config{};
         io_config.dev_addr = address;
         io_config.scl_speed_hz = kI2cHz;
+        io_config.control_phase_bytes = 1;
+        io_config.dc_bit_offset = 0;
+        io_config.lcd_cmd_bits = 16;
+        io_config.flags.disable_control_phase = 1;
         ESP_RETURN_ON_ERROR(
             esp_lcd_new_panel_io_i2c(i2c.handle(), &io_config, &io),
             kTag,
