@@ -11,6 +11,16 @@
 
 namespace deos::platform {
 
+struct NetworkSnapshot {
+    bool initialized{false};
+    bool connected{false};
+    bool provisioning{false};
+    std::string ssid;
+    std::string ip;
+    std::string setup_ssid;
+    std::string setup_password;
+};
+
 class NetworkController final : public Controller {
 public:
     NetworkController();
@@ -28,6 +38,9 @@ public:
     const std::string& api_token() const noexcept;
     const std::string& setup_ssid() const noexcept;
     const std::string& setup_password() const noexcept;
+
+    NetworkSnapshot snapshot() const;
+    bool forget_wifi_and_reboot();
 
 private:
     struct Impl;
