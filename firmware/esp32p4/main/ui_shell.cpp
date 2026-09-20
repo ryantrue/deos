@@ -1419,8 +1419,13 @@ struct ShellUi::Impl {
         Impl* ui = self(event);
         lv_obj_t* slider = static_cast<lv_obj_t*>(lv_event_get_target(event));
         const int value = lv_slider_get_value(slider);
+        const deos::ActionContext context{
+            "shell",
+            {"display.control"},
+        };
         const auto result = ui->actions.invoke(
             "display.brightness.set",
+            context,
             {{"value", static_cast<std::int64_t>(value)}});
         if (!result.ok) {
             ESP_LOGW("deos-ui", "brightness action failed: %s", result.message.c_str());
