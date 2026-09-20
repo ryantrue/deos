@@ -6,8 +6,8 @@
 #include "ui_runtime.hpp"
 
 #include "driver/gpio.h"
+#include "esp_check.h"
 #include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_io_interface.h"
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_log.h"
@@ -50,8 +50,8 @@ struct TouchController::Impl {
         esp_lcd_touch_point_data_t point{};
         uint8_t count = 0;
         if (esp_lcd_touch_get_data(self->touch, &point, &count, 1) == ESP_OK && count > 0) {
-            data->point.x = static_cast<lv_coord_t>(point.x);
-            data->point.y = static_cast<lv_coord_t>(point.y);
+            data->point.x = static_cast<int32_t>(point.x);
+            data->point.y = static_cast<int32_t>(point.y);
             data->state = LV_INDEV_STATE_PRESSED;
         } else {
             data->state = LV_INDEV_STATE_RELEASED;
