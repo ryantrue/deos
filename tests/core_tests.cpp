@@ -109,6 +109,34 @@ void test_dependencies_are_event_driven() {
     assert(engine.actual().at({"AIProvider", "qwen"}).status.phase == deos::Phase::Ready);
 }
 
+void test_update_reconciles_dependents() {
+    deos::Reconciler engine;
+    auto display = std::make_shared<TestController>("Display");
+    auto shell = std::make_shared<TestController>("Shell");
+    engine.register_controller(display);
+    engine.register_controller(shell);
+
+    deos::ResourceMap desired;
+    desired[{"Display", "primary"}] = {
+        {"Display", "primary"}, {{"brightness", "50"}}, {}};
+    desired[{"Shell", "home"}] = {
+        {"Shell", "home"}, {{"layout", "tiles"}}, {{"Display", "primary"}}};
+
+    engine.apply(desired);
+    engine.run_until_idle();
+
+    assert(display->reconcile_count == 1);
+    assert(shell->reconcile_count == 1);
+
+    desired.at({"Display", "primary"}).spec["brightness"] = "80";
+    engine.apply(desired);
+    engine.run_until_idle();
+
+    assert(display->reconcile_count == 2);
+    assert(shell->reconcile_count == 2);
+    assert(engine.actual().at({"Shell", "home"}).status.phase == deos::Phase::Ready);
+}
+
 void test_unknown_controller_is_visible_error() {
     deos::Reconciler engine;
     deos::ResourceMap desired;
@@ -160,6 +188,7 @@ int main() {
     test_plan_and_idempotency();
     test_update_and_delete();
     test_dependencies_are_event_driven();
+    test_update_reconciles_dependents();
     test_unknown_controller_is_visible_error();
     test_hundred_resource_dependency_chain();
     test_event_bus();
