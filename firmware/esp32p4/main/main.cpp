@@ -151,6 +151,34 @@ extern "C" void app_main(void) {
         {{"Display", "primary"}}
     };
 
+    ESP_LOGI(TAG, "boot stage 1: local interactive system");
+    for (const auto& step : engine.plan(desired)) {
+        ESP_LOGI(TAG, "plan %s %s",
+                 deos::to_string(step.op).c_str(),
+                 deos::to_string(step.key).c_str());
+    }
+
+    // apply() takes the map by value. Keep our local desired-state copy so the
+    // second boot stage can extend it without rebuilding the already-running UI.
+    engine.apply(desired);
+    const auto local_operations = engine.run_until_idle(128);
+    ESP_LOGI(TAG, "local reconciliation complete: %u operation(s)",
+             static_cast<unsigned>(local_operations));
+
+    for (const auto& [key, resource] : engine.actual()) {
+        ESP_LOGI(TAG, "%s => %s (%s)",
+                 deos::to_string(key).c_str(),
+                 deos::to_string(resource.status.phase).c_str(),
+                 resource.status.message.c_str());
+    }
+
+    // OTA validity is deliberately a local health decision. Mark a healthy
+    // display/shell/touch image valid before optional network bring-up can
+    // block or fail because of a missing router/C6 firmware mismatch.
+    validate_ota_if_healthy(engine);
+
+    ESP_LOGI(TAG, "boot stage 2: optional connectivity and remote update");
+
     desired[{"Network", "wifi"}] = {
         {"Network", "wifi"},
         {
@@ -178,16 +206,16 @@ extern "C" void app_main(void) {
     }
 
     engine.apply(std::move(desired));
-    const auto operations = engine.run_until_idle(128);
-    ESP_LOGI(TAG, "reconciliation complete: %u operation(s)",
-             static_cast<unsigned>(operations));
+    const auto optional_operations = engine.run_until_idle(64);
+    ESP_LOGI(TAG, "optional reconciliation complete: %u operation(s)",
+             static_cast<unsigned>(optional_operations));
 
     for (const auto& [key, resource] : engine.actual()) {
-        ESP_LOGI(TAG, "%s => %s (%s)",
-                 deos::to_string(key).c_str(),
-                 deos::to_string(resource.status.phase).c_str(),
-                 resource.status.message.c_str());
+        if (key.kind == "Network" || key.kind == "Update") {
+            ESP_LOGI(TAG, "%s => %s (%s)",
+                     deos::to_string(key).c_str(),
+                     deos::to_string(resource.status.phase).c_str(),
+                     resource.status.message.c_str());
+        }
     }
-
-    validate_ota_if_healthy(engine);
 }
