@@ -289,13 +289,13 @@ struct StorageController::Impl {
         return create_deos_layout();
     }
 
-    esp_err_t wipe_partition_metadata() {
-        if (card == nullptr || card->csd.sector_size <= 0 || card->csd.capacity <= 0) {
+    esp_err_t wipe_partition_metadata(sdmmc_card_t* target) {
+        if (target == nullptr || target->csd.sector_size <= 0 || target->csd.capacity <= 0) {
             return ESP_ERR_INVALID_STATE;
         }
 
-        const size_t sector_size = static_cast<size_t>(card->csd.sector_size);
-        const size_t sector_count = static_cast<size_t>(card->csd.capacity);
+        const size_t sector_size = static_cast<size_t>(target->csd.sector_size);
+        const size_t sector_count = static_cast<size_t>(target->csd.capacity);
         auto* zero = static_cast<uint8_t*>(std::calloc(1, sector_size));
         if (zero == nullptr) {
             return ESP_ERR_NO_MEM;
@@ -305,7 +305,7 @@ struct StorageController::Impl {
         // previous GPT backup header/table can survive an MBR-only repartition.
         const size_t head_count = std::min<size_t>(34, sector_count);
         for (size_t sector = 0; sector < head_count; ++sector) {
-            const esp_err_t err = sdmmc_write_sectors(card, zero, sector, 1);
+            const esp_err_t err = sdmmc_write_sectors(target, zero, sector, 1);
             if (err != ESP_OK) {
                 std::free(zero);
                 ESP_LOGE(kTag, "failed clearing SD metadata sector %u: %s",
@@ -318,7 +318,7 @@ struct StorageController::Impl {
             const size_t tail_count = std::min<size_t>(33, sector_count - head_count);
             const size_t tail_start = sector_count - tail_count;
             for (size_t sector = tail_start; sector < sector_count; ++sector) {
-                const esp_err_t err = sdmmc_write_sectors(card, zero, sector, 1);
+                const esp_err_t err = sdmmc_write_sectors(target, zero, sector, 1);
                 if (err != ESP_OK) {
                     std::free(zero);
                     ESP_LOGE(kTag, "failed clearing SD tail metadata sector %u: %s",
@@ -331,6 +331,49 @@ struct StorageController::Impl {
         std::free(zero);
         ESP_LOGI(kTag, "Cleared stale MBR/GPT metadata areas");
         return ESP_OK;
+    }
+
+    esp_err_t wipe_unmounted_card_metadata() {
+        sdmmc_host_t host = host_config();
+        sdmmc_slot_config_t slot = slot_config();
+        sdmmc_card_t temporary_card{};
+        bool host_initialized = false;
+        bool card_initialized = false;
+
+        esp_err_t err = host.init();
+        if (err != ESP_OK) {
+            ESP_LOGE(kTag, "SDMMC host init for cleanup failed: %s", esp_err_to_name(err));
+            return err;
+        }
+        host_initialized = true;
+
+        err = sdmmc_host_init_slot(host.slot, &slot);
+        if (err == ESP_OK) {
+            err = sdmmc_card_init(&host, &temporary_card);
+            card_initialized = (err == ESP_OK);
+        }
+
+        if (err == ESP_OK) {
+            err = wipe_partition_metadata(&temporary_card);
+        }
+
+        if (card_initialized) {
+            const esp_err_t deinit_err = sdmmc_card_deinit(&temporary_card);
+            if (err == ESP_OK && deinit_err != ESP_OK) {
+                err = deinit_err;
+            }
+        }
+        if (host_initialized) {
+            const esp_err_t deinit_err = host.deinit();
+            if (err == ESP_OK && deinit_err != ESP_OK) {
+                err = deinit_err;
+            }
+        }
+
+        if (err != ESP_OK) {
+            ESP_LOGE(kTag, "SD metadata cleanup failed: %s", esp_err_to_name(err));
+        }
+        return err;
     }
 
     esp_err_t repartition_mounted_card() {
@@ -356,7 +399,7 @@ struct StorageController::Impl {
         }
 
         ESP_RETURN_ON_ERROR(
-            wipe_partition_metadata(),
+            wipe_partition_metadata(card),
             kTag,
             "failed clearing stale partition metadata");
 
@@ -393,9 +436,13 @@ struct StorageController::Impl {
             }
         } else {
             // This path is used for a card which SDMMC can initialize but FAT
-            // cannot mount. The helper is deliberately called with formatting
-            // enabled only after explicit destructive confirmation in the UI.
-            ESP_LOGW(kTag, "Formatting unmounted/unsupported SD card by explicit user request");
+            // cannot mount. Clean stale GPT/MBR metadata first, then let the
+            // public ESP-IDF helper create a fresh single-partition FAT volume.
+            ESP_LOGW(kTag, "Cleaning and formatting unsupported SD card by explicit user request");
+            ESP_RETURN_ON_ERROR(
+                wipe_unmounted_card_metadata(),
+                kTag,
+                "SD metadata cleanup failed");
             err = mount(true);
             if (err != ESP_OK) {
                 return err;
