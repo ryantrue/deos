@@ -50,7 +50,7 @@ EntityRegistry::EntityRegistry(EventBus* events) : events_(events) {}
 
 bool EntityRegistry::register_entity(EntityDescriptor descriptor,
                                      StateValue initial_value) {
-    if (descriptor.id.empty() || entities_.find(descriptor.id) != entities_.end()) {
+    if (descriptor.id.empty()) {
         return false;
     }
     if (descriptor.name.empty()) {
@@ -59,13 +59,20 @@ bool EntityRegistry::register_entity(EntityDescriptor descriptor,
 
     const std::string id = descriptor.id;
     const StateValueType type = state_value_type(initial_value);
-    entities_.emplace(
-        id,
-        EntitySnapshot{
-            std::move(descriptor),
-            std::move(initial_value),
-            1,
-        });
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (entities_.find(id) != entities_.end()) {
+            return false;
+        }
+        entities_.emplace(
+            id,
+            EntitySnapshot{
+                std::move(descriptor),
+                std::move(initial_value),
+                1,
+            });
+    }
 
     if (events_ != nullptr) {
         events_->publish({
@@ -80,13 +87,17 @@ bool EntityRegistry::register_entity(EntityDescriptor descriptor,
 }
 
 bool EntityRegistry::unregister_entity(std::string_view id) {
-    const auto it = entities_.find(id);
-    if (it == entities_.end()) {
-        return false;
+    std::string key;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = entities_.find(id);
+        if (it == entities_.end()) {
+            return false;
+        }
+        key = it->first;
+        entities_.erase(it);
     }
 
-    const std::string key = it->first;
-    entities_.erase(it);
     if (events_ != nullptr) {
         events_->publish({"state.removed", {{"id", key}}});
     }
@@ -94,26 +105,28 @@ bool EntityRegistry::unregister_entity(std::string_view id) {
 }
 
 bool EntityRegistry::set(std::string_view id, StateValue value) {
-    const auto it = entities_.find(id);
-    if (it == entities_.end()) {
-        return false;
-    }
+    std::optional<Event> event;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = entities_.find(id);
+        if (it == entities_.end()) {
+            return false;
+        }
 
-    if (state_value_type(it->second.value) != state_value_type(value)) {
-        return false;
-    }
+        if (state_value_type(it->second.value) != state_value_type(value)) {
+            return false;
+        }
 
-    const std::string before = to_string(it->second.value);
-    const std::string after = to_string(value);
-    if (it->second.value == value) {
-        return true;
-    }
+        if (it->second.value == value) {
+            return true;
+        }
 
-    it->second.value = std::move(value);
-    ++it->second.revision;
+        const std::string before = to_string(it->second.value);
+        const std::string after = to_string(value);
+        it->second.value = std::move(value);
+        ++it->second.revision;
 
-    if (events_ != nullptr) {
-        events_->publish({
+        event = Event{
             "state.changed",
             {
                 {"id", it->first},
@@ -121,12 +134,17 @@ bool EntityRegistry::set(std::string_view id, StateValue value) {
                 {"value", after},
                 {"revision", std::to_string(it->second.revision)},
             },
-        });
+        };
+    }
+
+    if (events_ != nullptr && event.has_value()) {
+        events_->publish(*event);
     }
     return true;
 }
 
 std::optional<EntitySnapshot> EntityRegistry::get(std::string_view id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto it = entities_.find(id);
     if (it == entities_.end()) {
         return std::nullopt;
@@ -135,6 +153,7 @@ std::optional<EntitySnapshot> EntityRegistry::get(std::string_view id) const {
 }
 
 std::vector<EntitySnapshot> EntityRegistry::list() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<EntitySnapshot> result;
     result.reserve(entities_.size());
     for (const auto& [id, snapshot] : entities_) {
@@ -144,7 +163,8 @@ std::vector<EntitySnapshot> EntityRegistry::list() const {
     return result;
 }
 
-std::size_t EntityRegistry::size() const noexcept {
+std::size_t EntityRegistry::size() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return entities_.size();
 }
 
