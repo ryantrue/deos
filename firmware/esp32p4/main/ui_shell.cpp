@@ -9,6 +9,9 @@
 #include "esp_heap_caps.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lvgl.h"
 
 #include <algorithm>
@@ -327,7 +330,8 @@ struct ShellUi::Impl {
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
 
         if (developer_mode) {
-            make_row(body, "Developer", "Diagnostics and debug tools", false);
+            lv_obj_t* developer = make_row(body, "Developer", "Diagnostics and debug tools");
+            lv_obj_add_event_cb(developer, on_developer, LV_EVENT_CLICKED, this);
         }
 
         lv_obj_t* about = make_row(body, "About DEOS", "System, build and hardware");
@@ -455,6 +459,47 @@ struct ShellUi::Impl {
             screen, "Forget and reboot", color(0x8D3039), color(0xFFFFFF), 340);
         lv_obj_set_pos(forget, 356, 492);
         lv_obj_add_event_cb(forget, on_forget_wifi, LV_EVENT_CLICKED, this);
+    }
+
+    void show_developer() {
+        lv_obj_t* screen = begin_screen("Developer", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 110);
+        lv_obj_set_size(card, 672, 510);
+        set_panel_style(card, color(0x10161B), color(0x28404A));
+        lv_obj_set_style_pad_all(card, 24, 0);
+        lv_obj_set_style_pad_row(card, 2, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+
+        const platform::NetworkSnapshot net = network.snapshot();
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+        const esp_partition_t* running = esp_ota_get_running_partition();
+
+        const uint64_t uptime_sec =
+            static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
+        add_info_row(card, "Uptime", std::to_string(uptime_sec) + " s");
+        add_info_row(card, "Tasks", std::to_string(uxTaskGetNumberOfTasks()));
+        add_info_row(card, "Internal free",
+                     bytes_human(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        add_info_row(card, "Largest internal",
+                     bytes_human(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        add_info_row(card, "PSRAM free",
+                     bytes_human(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+        add_info_row(card, "Network",
+                     net.provisioning
+                         ? "setup-ap"
+                         : (net.connected ? "connected" : "offline/connecting"));
+        add_info_row(card, "IP", net.ip.empty() ? "-" : net.ip);
+        add_info_row(card, "SD", platform::to_string(sd.state));
+        add_info_row(card, "OTA slot",
+                     running != nullptr ? running->label : "unknown");
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Developer Mode is intentionally separate from normal device UX.",
+            color(0x6E7E89));
+        lv_obj_set_pos(note, 28, 646);
     }
 
     void show_system() {
@@ -713,6 +758,10 @@ struct ShellUi::Impl {
 
     static void on_system(lv_event_t* event) {
         self(event)->show_system();
+    }
+
+    static void on_developer(lv_event_t* event) {
+        self(event)->show_developer();
     }
 
     static void on_network(lv_event_t* event) {
