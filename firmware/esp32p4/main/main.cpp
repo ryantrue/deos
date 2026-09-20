@@ -3,6 +3,7 @@
 #include "deos/core/controller.hpp"
 #include "deos/core/reconciler.hpp"
 #include "display_controller.hpp"
+#include "shell_controller.hpp"
 
 #include "esp_log.h"
 
@@ -32,16 +33,18 @@ public:
 }  // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "DEOS ESP32-P4 UI bring-up");
+    ESP_LOGI(TAG, "DEOS ESP32-P4 home shell v2");
 
     // Static lifetime is intentional: controllers own hardware/runtime handles used
     // by long-lived FreeRTOS/LVGL callbacks after app_main() returns.
     static deos::Reconciler engine;
     static auto system_controller = std::make_shared<SystemController>();
     static auto display_controller = std::make_shared<deos::platform::DisplayController>();
+    static auto shell_controller = std::make_shared<deos::platform::ShellController>();
 
     engine.register_controller(system_controller);
     engine.register_controller(display_controller);
+    engine.register_controller(shell_controller);
 
     deos::ResourceMap desired;
     desired[{"System", "device"}] = {
@@ -61,6 +64,15 @@ extern "C" void app_main(void) {
             {"format", "rgb565"},
         },
         {{"System", "device"}}
+    };
+    desired[{"Shell", "home"}] = {
+        {"Shell", "home"},
+        {
+            {"layout", "adaptive-tiles"},
+            {"chrome", "mobile"},
+            {"theme", "dark"},
+        },
+        {{"Display", "primary"}}
     };
 
     for (const auto& step : engine.plan(desired)) {

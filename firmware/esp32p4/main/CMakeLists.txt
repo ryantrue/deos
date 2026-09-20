@@ -2,10 +2,13 @@ idf_component_register(
     SRCS
         "main.cpp"
         "display_controller.cpp"
+        "ui_runtime.cpp"
+        "shell_controller.cpp"
         "ui_shell.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         deos_core
+        freertos
         esp_lcd
         esp_driver_ledc
         esp_hw_support

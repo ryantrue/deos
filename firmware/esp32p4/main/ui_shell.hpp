@@ -5,6 +5,6 @@
 
 namespace deos::ui {
 
-void create_boot_shell(lv_display_t* display);
+void create_home_shell(lv_display_t* display);
 
 }  // namespace deos::ui
