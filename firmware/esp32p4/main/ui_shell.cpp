@@ -94,7 +94,8 @@ struct ShellUi::Impl {
           preferences(device_preferences),
           resources(resource_runtime),
           network(network_controller),
-          storage(storage_controller) {}
+          storage(storage_controller),
+          developer_mode(device_preferences.developer_mode()) {}
 
     ~Impl() {
         stop_storage_timer();
@@ -773,8 +774,8 @@ struct ShellUi::Impl {
         lv_obj_t* note = make_label(
             body,
             developer_mode
-                ? "Developer mode is enabled for this boot."
-                : "Tip: developer controls stay hidden during normal use.",
+                ? "Developer Mode is enabled and persists across reboot."
+                : "Developer controls stay hidden during normal use.",
             color(0x606B77));
         lv_obj_set_style_pad_top(note, 8, 0);
     }
@@ -937,11 +938,10 @@ struct ShellUi::Impl {
         add_info_row(card, "OTA slot",
                      running != nullptr ? running->label : "unknown");
 
-        lv_obj_t* note = make_label(
-            screen,
-            "Developer Mode is intentionally separate from normal device UX.",
-            color(0x6E7E89));
-        lv_obj_set_pos(note, 28, 646);
+        lv_obj_t* disable = make_action(
+            screen, "Disable Developer Mode", color(0x302226), color(0xE7B3B8), 672);
+        lv_obj_set_pos(disable, 24, 628);
+        lv_obj_add_event_cb(disable, on_disable_developer, LV_EVENT_CLICKED, this);
     }
 
     int desired_brightness() const {
@@ -1396,9 +1396,18 @@ struct ShellUi::Impl {
             ++ui->developer_taps;
             if (ui->developer_taps >= 7) {
                 ui->developer_mode = true;
+                (void)ui->preferences.set_developer_mode(true);
             }
         }
         ui->show_system();
+    }
+
+    static void on_disable_developer(lv_event_t* event) {
+        Impl* ui = self(event);
+        ui->developer_mode = false;
+        ui->developer_taps = 0;
+        (void)ui->preferences.set_developer_mode(false);
+        ui->show_settings();
     }
 
     static void on_storage_timer(lv_timer_t* timer) {
