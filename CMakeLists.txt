@@ -10,6 +10,8 @@ add_library(deos_core
     core/src/plan.cpp
     core/src/reconciler.cpp
     core/src/event_bus.cpp
+    core/src/state.cpp
+    core/src/action.cpp
 )
 target_include_directories(deos_core PUBLIC core/include)
 target_compile_options(deos_core PRIVATE -Wall -Wextra -Wpedantic)
