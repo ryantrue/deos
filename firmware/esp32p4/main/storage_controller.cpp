@@ -3,9 +3,11 @@
 #include "storage_controller.hpp"
 
 #include "driver/sdmmc_host.h"
+#include "diskio_sdmmc.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
+#include "ff.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -13,6 +15,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <sys/stat.h>
@@ -282,11 +285,55 @@ struct StorageController::Impl {
         return create_deos_layout();
     }
 
+    esp_err_t repartition_mounted_card() {
+        if (!mounted || card == nullptr) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        const BYTE pdrv = ff_diskio_get_pdrv_card(card);
+        if (pdrv == 0xFF) {
+            ESP_LOGE(kTag, "SD physical drive is not registered");
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        char drive[3] = {
+            static_cast<char>('0' + pdrv),
+            ':',
+            '\0',
+        };
+        FRESULT result = f_mount(nullptr, drive, 0);
+        if (result != FR_OK) {
+            ESP_LOGE(kTag, "FAT unmount before repartition failed: %d", result);
+            return ESP_FAIL;
+        }
+
+        void* work = std::malloc(FF_MAX_SS);
+        if (work == nullptr) {
+            return ESP_ERR_NO_MEM;
+        }
+
+        const LBA_t partitions[4] = {100, 0, 0, 0};
+        result = f_fdisk(pdrv, partitions, work);
+        std::free(work);
+
+        if (result != FR_OK) {
+            ESP_LOGE(kTag, "f_fdisk failed: %d", result);
+            return ESP_FAIL;
+        }
+
+        ESP_LOGI(kTag, "SD partition table replaced with one 100%% DEOS partition");
+        return ESP_OK;
+    }
+
     esp_err_t format_for_deos() {
         esp_err_t err = ESP_OK;
 
         if (mounted && card != nullptr) {
-            ESP_LOGW(kTag, "Formatting mounted SD card by explicit user request");
+            ESP_LOGW(kTag, "Repartitioning and formatting mounted SD card by explicit user request");
+            ESP_RETURN_ON_ERROR(
+                repartition_mounted_card(),
+                kTag,
+                "SD repartition failed");
             err = esp_vfs_fat_sdcard_format(kMountPoint, card);
             if (err != ESP_OK) {
                 return err;
