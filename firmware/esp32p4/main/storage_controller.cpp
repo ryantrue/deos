@@ -363,7 +363,10 @@ struct StorageController::Impl {
         // Deinitializing the host/slot below is the matching cleanup path.
         (void)card_initialized;
         if (host_initialized) {
-            const esp_err_t deinit_err = host.deinit();
+            const esp_err_t deinit_err =
+                (host.flags & SDMMC_HOST_FLAG_DEINIT_ARG)
+                    ? host.deinit_p(host.slot)
+                    : host.deinit();
             if (err == ESP_OK && deinit_err != ESP_OK) {
                 err = deinit_err;
             }
