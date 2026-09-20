@@ -1,0 +1,30 @@
+name: ESP32-P4 Firmware CI
+
+on:
+  push:
+    paths:
+      - "core/**"
+      - "firmware/esp32p4/**"
+      - "boards/waveshare-esp32-p4-wifi6-touch-lcd-4b/**"
+      - ".github/workflows/esp32p4-ci.yml"
+  pull_request:
+    paths:
+      - "core/**"
+      - "firmware/esp32p4/**"
+      - "boards/waveshare-esp32-p4-wifi6-touch-lcd-4b/**"
+      - ".github/workflows/esp32p4-ci.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ESP32-P4 bootstrap with ESP-IDF 6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32p4
+          path: firmware/esp32p4
+          command: idf.py build
