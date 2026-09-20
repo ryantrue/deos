@@ -17,11 +17,15 @@ namespace {
 constexpr char kTag[] = "deos-shell";
 }
 
-ShellController::ShellController(DevicePreferences& preferences,
+ShellController::ShellController(EntityRegistry& entities,
+                                 ActionRegistry& actions,
+                                 DevicePreferences& preferences,
                                  ResourceRuntime& resources,
                                  NetworkController& network,
                                  StorageController& storage)
-    : preferences_(preferences),
+    : entities_(entities),
+      actions_(actions),
+      preferences_(preferences),
       resources_(resources),
       network_(network),
       storage_(storage) {}
@@ -47,7 +51,13 @@ ResourceStatus ShellController::reconcile(const Resource& desired,
 
         ESP_LOGI(kTag, "Creating interactive Shell/home");
         ui_ = std::make_unique<ui::ShellUi>(
-            runtime.display(), preferences_, resources_, network_, storage_);
+            runtime.display(),
+            entities_,
+            actions_,
+            preferences_,
+            resources_,
+            network_,
+            storage_);
         ui_->create();
     }
 
