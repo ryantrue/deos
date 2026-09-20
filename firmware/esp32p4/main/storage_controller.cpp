@@ -357,12 +357,11 @@ struct StorageController::Impl {
             err = wipe_partition_metadata(&temporary_card);
         }
 
-        if (card_initialized) {
-            const esp_err_t deinit_err = sdmmc_card_deinit(&temporary_card);
-            if (err == ESP_OK && deinit_err != ESP_OK) {
-                err = deinit_err;
-            }
-        }
+        // ESP-IDF 6.1 does not expose sdmmc_card_deinit().
+        // SDMMC_HOST_DEFAULT() also does not set SDMMC_HOST_FLAG_ALLOC_ALIGNED_BUF,
+        // so this temporary card owns no separate buffer that needs releasing.
+        // Deinitializing the host/slot below is the matching cleanup path.
+        (void)card_initialized;
         if (host_initialized) {
             const esp_err_t deinit_err = host.deinit();
             if (err == ESP_OK && deinit_err != ESP_OK) {
