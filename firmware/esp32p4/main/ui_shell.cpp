@@ -763,6 +763,9 @@ struct ShellUi::Impl {
         lv_obj_t* storage_row = make_row(body, "Storage", "SD card and DEOS volume");
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
 
+        lv_obj_t* update_row = make_row(body, "Software Update", "A/B OTA and build status");
+        lv_obj_add_event_cb(update_row, on_update, LV_EVENT_CLICKED, this);
+
         if (developer_mode) {
             lv_obj_t* developer = make_row(body, "Developer", "Diagnostics and debug tools");
             lv_obj_add_event_cb(developer, on_developer, LV_EVENT_CLICKED, this);
@@ -902,6 +905,46 @@ struct ShellUi::Impl {
             screen, "Forget and reboot", color(0x8D3039), color(0xFFFFFF), 340);
         lv_obj_set_pos(forget, 356, 492);
         lv_obj_add_event_cb(forget, on_forget_wifi, LV_EVENT_CLICKED, this);
+    }
+
+    void show_update() {
+        lv_obj_t* screen = begin_screen("Software Update", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 120);
+        lv_obj_set_size(card, 672, 430);
+        set_panel_style(card, color(0x11151A), color(0x29333E));
+        lv_obj_set_style_pad_all(card, 26, 0);
+        lv_obj_set_style_pad_row(card, 2, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+
+        const esp_app_desc_t* app = esp_app_get_description();
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+        const bool ota_ready = resources.ready({"Update", "system"});
+        const platform::NetworkSnapshot net = network.snapshot();
+
+        add_info_row(card, "Build", app != nullptr ? app->version : "unknown");
+        add_info_row(card, "ESP-IDF", app != nullptr ? app->idf_ver : "unknown");
+        add_info_row(card, "Running slot",
+                     running != nullptr ? running->label : "unknown");
+        add_info_row(card, "Next slot",
+                     next != nullptr ? next->label : "unknown");
+        add_info_row(card, "A/B rollback", "enabled");
+        add_info_row(card, "Remote OTA",
+                     ota_ready ? "ready" : "waiting for Network/wifi");
+        add_info_row(card, "Device",
+                     net.connected && !net.ip.empty() ? net.ip : "deos.local");
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Developer OTA uploads only the application image to Update/system.\n"
+            "Use: deosctl ota deos_esp32p4.bin\n"
+            "The new slot is accepted only after local DEOS health checks pass.",
+            color(0x758290));
+        lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(note, 672);
+        lv_obj_set_pos(note, 24, 580);
     }
 
     void show_developer() {
@@ -1335,6 +1378,10 @@ struct ShellUi::Impl {
             {"Display", "primary"},
             "brightness",
             std::to_string(value));
+    }
+
+    static void on_update(lv_event_t* event) {
+        self(event)->show_update();
     }
 
     static void on_developer(lv_event_t* event) {
