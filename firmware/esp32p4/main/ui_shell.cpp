@@ -2,6 +2,7 @@
 
 #include "ui_shell.hpp"
 
+#include "network_controller.hpp"
 #include "storage_controller.hpp"
 
 #include "esp_app_desc.h"
@@ -66,14 +67,19 @@ std::string bytes_human(uint64_t bytes) {
 
 struct ShellUi::Impl {
     lv_display_t* display{nullptr};
+    platform::NetworkController& network;
     platform::StorageController& storage;
     lv_timer_t* storage_timer{nullptr};
     lv_obj_t* storage_body{nullptr};
     int developer_taps{0};
     bool developer_mode{false};
 
-    Impl(lv_display_t* display_handle, platform::StorageController& storage_controller)
-        : display(display_handle), storage(storage_controller) {}
+    Impl(lv_display_t* display_handle,
+         platform::NetworkController& network_controller,
+         platform::StorageController& storage_controller)
+        : display(display_handle),
+          network(network_controller),
+          storage(storage_controller) {}
 
     ~Impl() {
         stop_storage_timer();
@@ -312,7 +318,9 @@ struct ShellUi::Impl {
         lv_obj_set_style_pad_row(body, 10, 0);
         lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
 
-        make_row(body, "Network", "Wi-Fi and local control plane", false);
+        lv_obj_t* network_row = make_row(body, "Network", "Wi-Fi and local control plane");
+        lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
+
         make_row(body, "Display", "Brightness and sleep", false);
 
         lv_obj_t* storage_row = make_row(body, "Storage", "SD card and DEOS volume");
@@ -346,6 +354,107 @@ struct ShellUi::Impl {
 
         lv_obj_t* right = make_label(row, value.c_str(), color(0xE6EAF0));
         lv_obj_align(right, LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+    void show_network() {
+        lv_obj_t* screen = begin_screen("Network", true);
+        const platform::NetworkSnapshot net = network.snapshot();
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 118);
+        lv_obj_set_size(card, 672, 430);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 26, 0);
+
+        const char* state_text = net.provisioning
+                                     ? "SETUP"
+                                     : (net.connected ? "CONNECTED" : "CONNECTING");
+        lv_obj_t* state = make_label(
+            card,
+            state_text,
+            net.connected ? color(0x72D69D) : color(0xE2C66F),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(state, 0, 0);
+
+        if (!net.initialized) {
+            lv_obj_t* note = make_label(
+                card,
+                "Network service is still starting.",
+                color(0x8C97A4));
+            lv_obj_set_pos(note, 0, 56);
+            return;
+        }
+
+        if (net.provisioning) {
+            lv_obj_t* title = make_label(
+                card,
+                "Connect a phone or computer to this setup network:",
+                color(0x9AA5B2));
+            lv_obj_set_pos(title, 0, 62);
+
+            lv_obj_t* ssid = make_label(
+                card, net.setup_ssid.c_str(), color(0xF4F7FA), &lv_font_montserrat_28);
+            lv_obj_set_pos(ssid, 0, 104);
+
+            const std::string password = "Password: " + net.setup_password;
+            lv_obj_t* pass = make_label(card, password.c_str(), color(0xC8D1DB));
+            lv_obj_set_pos(pass, 0, 150);
+
+            lv_obj_t* step = make_label(
+                card,
+                "Then open http://192.168.4.1/ and choose the Wi-Fi network\n"
+                "DEOS should use. Credentials are stored only on this device.",
+                color(0x7E8996));
+            lv_label_set_long_mode(step, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(step, 610);
+            lv_obj_set_pos(step, 0, 205);
+        } else {
+            add_info_row(card, "Wi-Fi", net.ssid.empty() ? "configured" : net.ssid);
+            add_info_row(card, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
+            add_info_row(card, "Local name", "deos.local");
+            add_info_row(card, "Control API", "port 80 / token auth");
+
+            lv_obj_t* forget = make_action(
+                screen, "Forget Wi-Fi...", color(0x3A2023), color(0xF2B2B7), 672);
+            lv_obj_set_pos(forget, 24, 576);
+            lv_obj_add_event_cb(forget, on_forget_confirm, LV_EVENT_CLICKED, this);
+        }
+    }
+
+    void show_forget_wifi_confirm() {
+        lv_obj_t* screen = begin_screen("Forget Wi-Fi?", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 138);
+        lv_obj_set_size(card, 672, 300);
+        set_panel_style(card, color(0x24171A), color(0x633239));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* title = make_label(
+            card,
+            "DEOS will remove the saved Wi-Fi profile.",
+            color(0xF4B4BA),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* detail = make_label(
+            card,
+            "The device API token is kept. After reboot DEOS will return to\n"
+            "its setup access point so Wi-Fi can be configured again.",
+            color(0xC6B9BC));
+        lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(detail, 610);
+        lv_obj_set_pos(detail, 0, 78);
+
+        lv_obj_t* cancel = make_action(
+            screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
+        lv_obj_set_pos(cancel, 24, 492);
+        lv_obj_add_event_cb(cancel, on_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* forget = make_action(
+            screen, "Forget and reboot", color(0x8D3039), color(0xFFFFFF), 340);
+        lv_obj_set_pos(forget, 356, 492);
+        lv_obj_add_event_cb(forget, on_forget_wifi, LV_EVENT_CLICKED, this);
     }
 
     void show_system() {
@@ -587,6 +696,29 @@ struct ShellUi::Impl {
         self(event)->show_system();
     }
 
+    static void on_network(lv_event_t* event) {
+        self(event)->show_network();
+    }
+
+    static void on_forget_confirm(lv_event_t* event) {
+        self(event)->show_forget_wifi_confirm();
+    }
+
+    static void on_forget_wifi(lv_event_t* event) {
+        Impl* ui = self(event);
+        if (ui->network.forget_wifi_and_reboot()) {
+            lv_obj_t* screen = ui->begin_screen("Rebooting", false);
+            lv_obj_t* message = make_label(
+                screen,
+                "Wi-Fi profile removed. DEOS is restarting into setup mode...",
+                color(0xD7DEE7),
+                &lv_font_montserrat_20);
+            lv_obj_set_pos(message, 48, 180);
+        } else {
+            ui->show_network();
+        }
+    }
+
     static void on_storage(lv_event_t* event) {
         self(event)->show_storage();
     }
@@ -626,8 +758,10 @@ struct ShellUi::Impl {
     }
 };
 
-ShellUi::ShellUi(lv_display_t* display, platform::StorageController& storage)
-    : impl_(std::make_unique<Impl>(display, storage)) {}
+ShellUi::ShellUi(lv_display_t* display,
+                 platform::NetworkController& network,
+                 platform::StorageController& storage)
+    : impl_(std::make_unique<Impl>(display, network, storage)) {}
 
 ShellUi::~ShellUi() = default;
 
