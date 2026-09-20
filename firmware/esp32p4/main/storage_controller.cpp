@@ -288,6 +288,50 @@ struct StorageController::Impl {
         return create_deos_layout();
     }
 
+    esp_err_t wipe_partition_metadata() {
+        if (card == nullptr || card->csd.sector_size <= 0 || card->csd.capacity <= 0) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        const size_t sector_size = static_cast<size_t>(card->csd.sector_size);
+        const size_t sector_count = static_cast<size_t>(card->csd.capacity);
+        auto* zero = static_cast<uint8_t*>(std::calloc(1, sector_size));
+        if (zero == nullptr) {
+            return ESP_ERR_NO_MEM;
+        }
+
+        // Clear both the primary partition metadata area and the tail where a
+        // previous GPT backup header/table can survive an MBR-only repartition.
+        const size_t head_count = std::min<size_t>(34, sector_count);
+        for (size_t sector = 0; sector < head_count; ++sector) {
+            const esp_err_t err = sdmmc_write_sectors(card, zero, sector, 1);
+            if (err != ESP_OK) {
+                std::free(zero);
+                ESP_LOGE(kTag, "failed clearing SD metadata sector %u: %s",
+                         static_cast<unsigned>(sector), esp_err_to_name(err));
+                return err;
+            }
+        }
+
+        if (sector_count > 34) {
+            const size_t tail_count = std::min<size_t>(33, sector_count - head_count);
+            const size_t tail_start = sector_count - tail_count;
+            for (size_t sector = tail_start; sector < sector_count; ++sector) {
+                const esp_err_t err = sdmmc_write_sectors(card, zero, sector, 1);
+                if (err != ESP_OK) {
+                    std::free(zero);
+                    ESP_LOGE(kTag, "failed clearing SD tail metadata sector %u: %s",
+                             static_cast<unsigned>(sector), esp_err_to_name(err));
+                    return err;
+                }
+            }
+        }
+
+        std::free(zero);
+        ESP_LOGI(kTag, "Cleared stale MBR/GPT metadata areas");
+        return ESP_OK;
+    }
+
     esp_err_t repartition_mounted_card() {
         if (!mounted || card == nullptr) {
             return ESP_ERR_INVALID_STATE;
@@ -309,6 +353,11 @@ struct StorageController::Impl {
             ESP_LOGE(kTag, "FAT unmount before repartition failed: %d", result);
             return ESP_FAIL;
         }
+
+        ESP_RETURN_ON_ERROR(
+            wipe_partition_metadata(),
+            kTag,
+            "failed clearing stale partition metadata");
 
         void* work = std::malloc(FF_MAX_SS);
         if (work == nullptr) {
