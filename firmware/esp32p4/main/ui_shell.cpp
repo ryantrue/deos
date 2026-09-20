@@ -74,6 +74,7 @@ struct ShellUi::Impl {
     platform::StorageController& storage;
     lv_timer_t* storage_timer{nullptr};
     lv_obj_t* storage_body{nullptr};
+    std::string storage_render_key;
     int developer_taps{0};
     bool developer_mode{false};
 
@@ -94,6 +95,7 @@ struct ShellUi::Impl {
             storage_timer = nullptr;
         }
         storage_body = nullptr;
+        storage_render_key.clear();
     }
 
     lv_obj_t* begin_screen(const char* title, bool show_back) {
@@ -570,8 +572,20 @@ struct ShellUi::Impl {
             return;
         }
 
-        lv_obj_clean(storage_body);
         const platform::SdVolumeSnapshot sd = storage.snapshot();
+        const std::string render_key =
+            std::string(platform::to_string(sd.state)) + "|" +
+            sd.message + "|" +
+            sd.operation + "|" +
+            sd.card_name + "|" +
+            std::to_string(sd.total_bytes) + "|" +
+            std::to_string(sd.free_bytes);
+
+        if (render_key == storage_render_key) {
+            return;
+        }
+        storage_render_key = render_key;
+        lv_obj_clean(storage_body);
 
         lv_obj_t* status = make_label(
             storage_body,
@@ -697,6 +711,7 @@ struct ShellUi::Impl {
         lv_obj_t* screen = begin_screen("Storage", true);
 
         storage_body = lv_obj_create(screen);
+        storage_render_key.clear();
         lv_obj_set_pos(storage_body, 24, 112);
         lv_obj_set_size(storage_body, 672, 570);
         set_panel_style(storage_body, color(0x11151A), color(0x262C34));
