@@ -109,25 +109,27 @@ ActionResult ActionRegistry::invoke(std::string_view id,
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto it = actions_.find(id);
-        if (it == actions_.end()) {
-            const ActionResult result{false, "unknown action", {}};
-            if (events_ != nullptr) {
-                events_->publish({
-                    "action.invoked",
-                    {
-                        {"id", std::string(id)},
-                        {"actor", context.actor},
-                        {"capability", ""},
-                        {"ok", "false"},
-                        {"message", result.message},
-                    },
-                });
-            }
-            return result;
+        if (it != actions_.end()) {
+            descriptor = it->second.descriptor;
+            handler = it->second.handler;
         }
+    }
 
-        descriptor = it->second.descriptor;
-        handler = it->second.handler;
+    if (!handler) {
+        const ActionResult result{false, "unknown action", {}};
+        if (events_ != nullptr) {
+            events_->publish({
+                "action.invoked",
+                {
+                    {"id", std::string(id)},
+                    {"actor", context.actor},
+                    {"capability", ""},
+                    {"ok", "false"},
+                    {"message", result.message},
+                },
+            });
+        }
+        return result;
     }
 
     ActionResult result;
