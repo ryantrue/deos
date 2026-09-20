@@ -95,7 +95,7 @@ extern "C" void app_main(void) {
     static auto network_controller = std::make_shared<deos::platform::NetworkController>();
     static auto shell_controller =
         std::make_shared<deos::platform::ShellController>(
-            resource_runtime, *network_controller, *storage_controller);
+            preferences, resource_runtime, *network_controller, *storage_controller);
     static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto update_controller =
         std::make_shared<deos::platform::UpdateController>(*network_controller);
