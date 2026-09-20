@@ -6,6 +6,7 @@
 #include <memory>
 
 namespace deos::platform {
+class DevicePreferences;
 class NetworkController;
 class ResourceRuntime;
 class StorageController;
@@ -16,6 +17,7 @@ namespace deos::ui {
 class ShellUi final {
 public:
     ShellUi(lv_display_t* display,
+            platform::DevicePreferences& preferences,
             platform::ResourceRuntime& resources,
             platform::NetworkController& network,
             platform::StorageController& storage);
