@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "deos/core/action.hpp"
 #include "deos/core/controller.hpp"
+#include "deos/core/state.hpp"
 
 #include <memory>
 #include <string_view>
@@ -19,7 +21,9 @@ class StorageController;
 
 class ShellController final : public Controller {
 public:
-    ShellController(DevicePreferences& preferences,
+    ShellController(EntityRegistry& entities,
+                    ActionRegistry& actions,
+                    DevicePreferences& preferences,
                     ResourceRuntime& resources,
                     NetworkController& network,
                     StorageController& storage);
@@ -31,6 +35,8 @@ public:
     ResourceStatus remove(const AppliedResource& current) override;
 
 private:
+    EntityRegistry& entities_;
+    ActionRegistry& actions_;
     DevicePreferences& preferences_;
     ResourceRuntime& resources_;
     NetworkController& network_;
