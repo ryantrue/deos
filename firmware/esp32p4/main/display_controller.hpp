@@ -8,9 +8,11 @@
 
 namespace deos::platform {
 
+class DevicePreferences;
+
 class DisplayController final : public Controller {
 public:
-    DisplayController();
+    explicit DisplayController(DevicePreferences& preferences);
     ~DisplayController() override;
 
     bool supports(std::string_view kind) const override;
@@ -19,6 +21,7 @@ public:
     ResourceStatus remove(const AppliedResource& current) override;
 
 private:
+    DevicePreferences& preferences_;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

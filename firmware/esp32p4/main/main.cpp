@@ -3,6 +3,7 @@
 #include "deos/core/controller.hpp"
 #include "deos/core/reconciler.hpp"
 #include "display_controller.hpp"
+#include "device_preferences.hpp"
 #include "network_controller.hpp"
 #include "resource_runtime.hpp"
 #include "shell_controller.hpp"
@@ -80,9 +81,16 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "DEOS ESP32-P4 interactive OS bring-up");
 
     static deos::Reconciler engine;
+    static deos::platform::DevicePreferences preferences;
     static deos::platform::ResourceRuntime resource_runtime(engine);
+
+    if (!preferences.initialize()) {
+        ESP_LOGW(TAG, "preferences unavailable; using runtime defaults");
+    }
+
     static auto system_controller = std::make_shared<SystemController>();
-    static auto display_controller = std::make_shared<deos::platform::DisplayController>();
+    static auto display_controller =
+        std::make_shared<deos::platform::DisplayController>(preferences);
     static auto storage_controller = std::make_shared<deos::platform::StorageController>();
     static auto network_controller = std::make_shared<deos::platform::NetworkController>();
     static auto shell_controller =
@@ -113,7 +121,7 @@ extern "C" void app_main(void) {
     desired[{"Display", "primary"}] = {
         {"Display", "primary"},
         {
-            {"brightness", "72"},
+            {"brightness", std::to_string(preferences.brightness(72))},
             {"width", "720"},
             {"height", "720"},
             {"format", "rgb565"},

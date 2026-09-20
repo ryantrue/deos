@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "display_controller.hpp"
+#include "device_preferences.hpp"
 #include "ui_runtime.hpp"
 
 #include "driver/gpio.h"
@@ -300,7 +301,8 @@ struct DisplayController::Impl {
     }
 };
 
-DisplayController::DisplayController() : impl_(std::make_unique<Impl>()) {}
+DisplayController::DisplayController(DevicePreferences& preferences)
+    : preferences_(preferences), impl_(std::make_unique<Impl>()) {}
 DisplayController::~DisplayController() = default;
 
 bool DisplayController::supports(std::string_view kind) const {
@@ -322,6 +324,10 @@ ResourceStatus DisplayController::reconcile(const Resource& desired,
         return {Phase::Error,
                 std::string("brightness update failed: ") + esp_err_to_name(brightness_result),
                 {}};
+    }
+
+    if (!preferences_.set_brightness(brightness)) {
+        ESP_LOGW(kTag, "brightness applied but preference persistence failed");
     }
 
     return {Phase::Ready,

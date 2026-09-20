@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "display_controller.cpp"
+        "device_preferences.cpp"
         "i2c_runtime.cpp"
         "network_controller.cpp"
         "resource_runtime.cpp"
