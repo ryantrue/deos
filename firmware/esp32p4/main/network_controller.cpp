@@ -2,6 +2,7 @@
 
 #include "network_controller.hpp"
 
+#include "cJSON.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_hosted.h"
@@ -108,11 +109,70 @@ std::string form_value(std::string_view body, std::string_view key) {
     return {};
 }
 
+cJSON* state_value_to_json(const StateValue& value) {
+    return std::visit(
+        [](const auto& typed) -> cJSON* {
+            using T = std::decay_t<decltype(typed)>;
+            if constexpr (std::is_same_v<T, bool>) {
+                return cJSON_CreateBool(typed);
+            } else if constexpr (std::is_same_v<T, std::int64_t>) {
+                return cJSON_CreateNumber(static_cast<double>(typed));
+            } else if constexpr (std::is_same_v<T, double>) {
+                return cJSON_CreateNumber(typed);
+            } else {
+                return cJSON_CreateString(typed.c_str());
+            }
+        },
+        value);
+}
+
+bool json_to_state_value(const cJSON* item, StateValue& out) {
+    if (cJSON_IsBool(item)) {
+        out = cJSON_IsTrue(item);
+        return true;
+    }
+    if (cJSON_IsNumber(item)) {
+        const double value = item->valuedouble;
+        const double integer = static_cast<double>(static_cast<std::int64_t>(value));
+        if (value == integer) {
+            out = static_cast<std::int64_t>(value);
+        } else {
+            out = value;
+        }
+        return true;
+    }
+    if (cJSON_IsString(item) && item->valuestring != nullptr) {
+        out = std::string(item->valuestring);
+        return true;
+    }
+    return false;
+}
+
+esp_err_t send_json(httpd_req_t* req, cJSON* root) {
+    if (root == nullptr) {
+        return httpd_resp_send_err(
+            req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+    }
+
+    char* payload = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (payload == nullptr) {
+        return httpd_resp_send_err(
+            req, HTTPD_500_INTERNAL_SERVER_ERROR, "json serialization failed");
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    const esp_err_t result = httpd_resp_sendstr(req, payload);
+    cJSON_free(payload);
+    return result;
+}
+
 }  // namespace
 
 struct NetworkController::Impl {
     NetworkController* owner{nullptr};
     EntityRegistry& entities;
+    ActionRegistry& actions;
     mutable SemaphoreHandle_t state_mutex{nullptr};
     httpd_handle_t server{nullptr};
     esp_netif_t* netif{nullptr};
@@ -129,8 +189,9 @@ struct NetworkController::Impl {
     bool is_provisioning{false};
     int retry_count{0};
 
-    explicit Impl(EntityRegistry& entity_registry)
-        : entities(entity_registry) {
+    Impl(EntityRegistry& entity_registry, ActionRegistry& action_registry)
+        : entities(entity_registry),
+          actions(action_registry) {
         state_mutex = xSemaphoreCreateMutex();
     }
 
@@ -456,6 +517,164 @@ struct NetworkController::Impl {
         return httpd_resp_sendstr(req, json);
     }
 
+    static esp_err_t entities_api(httpd_req_t* req) {
+        auto* self = static_cast<Impl*>(req->user_ctx);
+        if (self == nullptr || !self->authorized(req)) {
+            return httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "invalid token");
+        }
+
+        cJSON* root = cJSON_CreateObject();
+        cJSON* items = cJSON_AddArrayToObject(root, "entities");
+        if (root == nullptr || items == nullptr) {
+            if (root != nullptr) {
+                cJSON_Delete(root);
+            }
+            return httpd_resp_send_err(
+                req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+        }
+
+        for (const auto& snapshot : self->entities.list()) {
+            cJSON* item = cJSON_CreateObject();
+            if (item == nullptr) {
+                cJSON_Delete(root);
+                return httpd_resp_send_err(
+                    req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+            }
+            cJSON_AddStringToObject(item, "id", snapshot.descriptor.id.c_str());
+            cJSON_AddStringToObject(item, "name", snapshot.descriptor.name.c_str());
+            cJSON_AddStringToObject(item, "source", snapshot.descriptor.source.c_str());
+            cJSON_AddStringToObject(item, "unit", snapshot.descriptor.unit.c_str());
+            cJSON_AddNumberToObject(
+                item, "revision", static_cast<double>(snapshot.revision));
+            cJSON* value = state_value_to_json(snapshot.value);
+            if (value == nullptr) {
+                cJSON_Delete(item);
+                cJSON_Delete(root);
+                return httpd_resp_send_err(
+                    req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+            }
+            cJSON_AddItemToObject(item, "value", value);
+            cJSON_AddItemToArray(items, item);
+        }
+        return send_json(req, root);
+    }
+
+    static esp_err_t actions_api(httpd_req_t* req) {
+        auto* self = static_cast<Impl*>(req->user_ctx);
+        if (self == nullptr || !self->authorized(req)) {
+            return httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "invalid token");
+        }
+
+        cJSON* root = cJSON_CreateObject();
+        cJSON* items = cJSON_AddArrayToObject(root, "actions");
+        if (root == nullptr || items == nullptr) {
+            if (root != nullptr) {
+                cJSON_Delete(root);
+            }
+            return httpd_resp_send_err(
+                req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+        }
+
+        for (const auto& descriptor : self->actions.list()) {
+            cJSON* item = cJSON_CreateObject();
+            cJSON_AddStringToObject(item, "id", descriptor.id.c_str());
+            cJSON_AddStringToObject(item, "name", descriptor.name.c_str());
+            cJSON_AddStringToObject(item, "description", descriptor.description.c_str());
+            cJSON_AddStringToObject(item, "capability", descriptor.capability.c_str());
+            cJSON* parameters = cJSON_AddArrayToObject(item, "parameters");
+            for (const auto& parameter : descriptor.parameters) {
+                cJSON_AddItemToArray(parameters, cJSON_CreateString(parameter.c_str()));
+            }
+            cJSON_AddItemToArray(items, item);
+        }
+        return send_json(req, root);
+    }
+
+    static esp_err_t invoke_action_api(httpd_req_t* req) {
+        auto* self = static_cast<Impl*>(req->user_ctx);
+        if (self == nullptr || !self->authorized(req)) {
+            return httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "invalid token");
+        }
+        if (req->content_len <= 0 || req->content_len > 4096) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid request body");
+        }
+
+        std::string body(static_cast<size_t>(req->content_len), '\0');
+        size_t received = 0;
+        while (received < body.size()) {
+            const int n = httpd_req_recv(
+                req, body.data() + received, body.size() - received);
+            if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+                continue;
+            }
+            if (n <= 0) {
+                return ESP_FAIL;
+            }
+            received += static_cast<size_t>(n);
+        }
+
+        cJSON* root = cJSON_ParseWithLength(body.data(), body.size());
+        if (root == nullptr) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid json");
+        }
+
+        const cJSON* id = cJSON_GetObjectItemCaseSensitive(root, "id");
+        const cJSON* args = cJSON_GetObjectItemCaseSensitive(root, "args");
+        if (!cJSON_IsString(id) || id->valuestring == nullptr ||
+            (args != nullptr && !cJSON_IsObject(args))) {
+            cJSON_Delete(root);
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "id/args invalid");
+        }
+
+        StateValues arguments;
+        if (args != nullptr) {
+            const cJSON* entry = nullptr;
+            cJSON_ArrayForEach(entry, args) {
+                if (entry->string == nullptr) {
+                    cJSON_Delete(root);
+                    return httpd_resp_send_err(
+                        req, HTTPD_400_BAD_REQUEST, "argument name missing");
+                }
+                StateValue value;
+                if (!json_to_state_value(entry, value)) {
+                    cJSON_Delete(root);
+                    return httpd_resp_send_err(
+                        req, HTTPD_400_BAD_REQUEST, "arguments must be scalar values");
+                }
+                arguments.emplace(entry->string, std::move(value));
+            }
+        }
+
+        const std::string action_id(id->valuestring);
+        cJSON_Delete(root);
+
+        const ActionContext context{
+            "remote-api",
+            {
+                "display.control",
+                "storage.control",
+                "network.control",
+            },
+        };
+        const ActionResult result = self->actions.invoke(action_id, context, arguments);
+
+        cJSON* response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "ok", result.ok);
+        cJSON_AddStringToObject(response, "message", result.message.c_str());
+        cJSON* output = cJSON_AddObjectToObject(response, "output");
+        for (const auto& [key, value] : result.output) {
+            cJSON* json_value = state_value_to_json(value);
+            if (json_value != nullptr) {
+                cJSON_AddItemToObject(output, key.c_str(), json_value);
+            }
+        }
+
+        if (!result.ok) {
+            httpd_resp_set_status(req, "409 Conflict");
+        }
+        return send_json(req, response);
+    }
+
     static esp_err_t reboot_api(httpd_req_t* req) {
         auto* self = static_cast<Impl*>(req->user_ctx);
         if (self == nullptr || !self->authorized(req)) {
@@ -520,6 +739,36 @@ struct NetworkController::Impl {
         status.handler = status_api;
         status.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &status), kTag, "register status API failed");
+
+        httpd_uri_t entities_uri{};
+        entities_uri.uri = "/api/v1/entities";
+        entities_uri.method = HTTP_GET;
+        entities_uri.handler = entities_api;
+        entities_uri.user_ctx = this;
+        ESP_RETURN_ON_ERROR(
+            httpd_register_uri_handler(server, &entities_uri),
+            kTag,
+            "register entities API failed");
+
+        httpd_uri_t actions_uri{};
+        actions_uri.uri = "/api/v1/actions";
+        actions_uri.method = HTTP_GET;
+        actions_uri.handler = actions_api;
+        actions_uri.user_ctx = this;
+        ESP_RETURN_ON_ERROR(
+            httpd_register_uri_handler(server, &actions_uri),
+            kTag,
+            "register actions API failed");
+
+        httpd_uri_t invoke_uri{};
+        invoke_uri.uri = "/api/v1/action";
+        invoke_uri.method = HTTP_POST;
+        invoke_uri.handler = invoke_action_api;
+        invoke_uri.user_ctx = this;
+        ESP_RETURN_ON_ERROR(
+            httpd_register_uri_handler(server, &invoke_uri),
+            kTag,
+            "register action invoke API failed");
 
         httpd_uri_t reboot{};
         reboot.uri = "/api/v1/reboot";
@@ -682,8 +931,8 @@ struct NetworkController::Impl {
     }
 };
 
-NetworkController::NetworkController(EntityRegistry& entities)
-    : impl_(std::make_unique<Impl>(entities)) {
+NetworkController::NetworkController(EntityRegistry& entities, ActionRegistry& actions)
+    : impl_(std::make_unique<Impl>(entities, actions)) {
     impl_->owner = this;
 }
 
