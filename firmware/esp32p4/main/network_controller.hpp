@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "deos/core/action.hpp"
 #include "deos/core/controller.hpp"
 #include "deos/core/state.hpp"
 
@@ -24,7 +25,7 @@ struct NetworkSnapshot {
 
 class NetworkController final : public Controller {
 public:
-    explicit NetworkController(EntityRegistry& entities);
+    NetworkController(EntityRegistry& entities, ActionRegistry& actions);
     ~NetworkController() override;
 
     bool supports(std::string_view kind) const override;
