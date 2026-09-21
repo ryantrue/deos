@@ -454,7 +454,28 @@ struct StorageController::Impl {
                 repartition_mounted_card(),
                 kTag,
                 "SD repartition failed");
-            err = esp_vfs_fat_sdcard_format(kMountPoint, card);
+
+            // repartition_mounted_card() intentionally unmounts FatFs before
+            // rewriting the partition table. esp_vfs_fat_sdcard_format()
+            // requires a mounted FAT volume, so do not call it here. Release
+            // the old VFS/card registration and remount with explicit
+            // format_if_mount_failed instead. That creates FAT on the new
+            // canonical full-card partition using public ESP-IDF APIs.
+            sdmmc_card_t* old_card = card;
+            const esp_err_t unmount_err =
+                esp_vfs_fat_sdcard_unmount(kMountPoint, old_card);
+            if (unmount_err != ESP_OK) {
+                ESP_LOGE(
+                    kTag,
+                    "SD VFS cleanup after repartition failed: %s",
+                    esp_err_to_name(unmount_err));
+                return unmount_err;
+            }
+
+            mounted = false;
+            card = nullptr;
+
+            err = mount(true);
             if (err != ESP_OK) {
                 return err;
             }
