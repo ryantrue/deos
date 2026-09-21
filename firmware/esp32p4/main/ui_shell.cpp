@@ -390,10 +390,11 @@ struct ShellUi::Impl {
             case ScreenId::FormatConfirm: show_format_confirm(); break;
         }
 
-        lv_obj_t* active = lv_screen_active();
-        if (active != nullptr) {
-            lv_obj_fade_in(active, 120, 0);
-        }
+        // Do not animate opacity on the complete 720x720 screen. LVGL renders
+        // an object with style opacity through temporary software layers; on
+        // this surface that turns a navigation transition into a prolonged
+        // full-screen allocation/draw loop. Small overlays (for example the
+        // toast) can still use fades safely.
     }
 
     void go_home() {

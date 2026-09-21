@@ -31,6 +31,12 @@ CONFIG_LV_CONF_SKIP=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+# Run software drawing in a FreeRTOS-backed worker. With LV_OS_NONE, LVGL's
+# draw dispatcher busy-waits and can starve an idle task during a large frame.
+CONFIG_LV_OS_FREERTOS=y
+CONFIG_LV_USE_FREERTOS_TASK_NOTIFY=y
+CONFIG_LV_DRAW_THREAD_STACK_SIZE=8192
+CONFIG_LV_DRAW_THREAD_PRIO=2
 
 # ESP32-C6 Wi-Fi coprocessor over the board's 4-bit SDIO link.
 CONFIG_ESP_HOSTED_ENABLED=y

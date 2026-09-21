@@ -63,8 +63,8 @@ Apps -> Control -> Back -> Apps
 
 Pass when:
 
-- short screen fades remain visually smooth;
-- fades do not delay touch handling;
+- screen changes complete without full-screen opacity layers or watchdog starvation;
+- small overlay fades do not delay touch handling;
 - brightness/storage actions show a transient result toast;
 - navigation while a toast is visible does not crash or leave stale LVGL timers;
 - long storage operations expose durable Busy state instead of relying on a toast.

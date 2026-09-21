@@ -42,6 +42,8 @@ jobs:
           grep -qx 'CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y' "$config"
           grep -qx 'CONFIG_FREERTOS_HZ=1000' "$config"
           grep -qx 'CONFIG_COMPILER_OPTIMIZATION_PERF=y' "$config"
+          grep -qx 'CONFIG_LV_OS_FREERTOS=y' "$config"
+          grep -qx 'CONFIG_LV_DRAW_THREAD_PRIO=2' "$config"
 
       - name: Collect flash package
         shell: bash
