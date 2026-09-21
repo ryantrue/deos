@@ -153,8 +153,10 @@ extern "C" void app_main(void) {
     static auto system_controller = std::make_shared<SystemController>();
     static auto display_controller =
         std::make_shared<deos::platform::DisplayController>(preferences);
-    static auto storage_controller = std::make_shared<deos::platform::StorageController>();
-    static auto network_controller = std::make_shared<deos::platform::NetworkController>();
+    static auto storage_controller =
+        std::make_shared<deos::platform::StorageController>(entities);
+    static auto network_controller =
+        std::make_shared<deos::platform::NetworkController>(entities);
     static auto shell_controller =
         std::make_shared<deos::platform::ShellController>(
             entities,
@@ -252,9 +254,6 @@ extern "C" void app_main(void) {
     (void)entities.set(
         "system.ready",
         resource_ready(engine, "System", "device"));
-    (void)entities.set(
-        "storage.sd.state",
-        std::string(deos::platform::to_string(storage_controller->snapshot().state)));
 
     // OTA validity is deliberately a local health decision. Mark a healthy
     // display/shell/touch image valid before optional network bring-up can
