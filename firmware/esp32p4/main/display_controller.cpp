@@ -190,9 +190,10 @@ struct DisplayController::Impl {
         dpi.dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT;
         dpi.dpi_clock_freq_mhz = kDpiClockMhz;
         dpi.in_color_format = LCD_COLOR_FMT_RGB565;
-        // Use the panel buffers as complete LVGL frames. Rotating three panel
-        // buffers while updating them with unrelated partial draw buffers
-        // leaves different UI generations in each buffer and visibly flickers.
+        // Keep two complete panel buffers. LVGL DIRECT mode below renders only
+        // invalidated regions into these screen-sized buffers; FULL mode forces
+        // a complete 720x720 software redraw on every refresh and can starve
+        // IDLE0 long enough to trip the task watchdog.
         dpi.num_fbs = 2;
         dpi.video_timing.h_size = kWidth;
         dpi.video_timing.v_size = kHeight;
@@ -251,7 +252,7 @@ struct DisplayController::Impl {
                                frame_buffer_a,
                                frame_buffer_b,
                                frame_bytes,
-                               LV_DISPLAY_RENDER_MODE_FULL);
+                               LV_DISPLAY_RENDER_MODE_DIRECT);
         lv_display_set_flush_cb(display, lvgl_flush);
 
         esp_lcd_dpi_panel_event_callbacks_t callbacks{};
