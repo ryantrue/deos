@@ -22,8 +22,10 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -135,8 +137,14 @@ bool json_to_state_value(const cJSON* item, StateValue& out) {
     }
     if (cJSON_IsNumber(item)) {
         const double value = item->valuedouble;
-        const double integer = static_cast<double>(static_cast<std::int64_t>(value));
-        if (value == integer) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+        const double min_i64 =
+            static_cast<double>(std::numeric_limits<std::int64_t>::min());
+        const double max_i64 =
+            static_cast<double>(std::numeric_limits<std::int64_t>::max());
+        if (value >= min_i64 && value <= max_i64 && std::trunc(value) == value) {
             out = static_cast<std::int64_t>(value);
         } else {
             out = value;
@@ -526,11 +534,13 @@ struct NetworkController::Impl {
         }
 
         cJSON* root = cJSON_CreateObject();
+        if (root == nullptr) {
+            return httpd_resp_send_err(
+                req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+        }
         cJSON* items = cJSON_AddArrayToObject(root, "entities");
-        if (root == nullptr || items == nullptr) {
-            if (root != nullptr) {
-                cJSON_Delete(root);
-            }
+        if (items == nullptr) {
+            cJSON_Delete(root);
             return httpd_resp_send_err(
                 req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
         }
@@ -568,24 +578,44 @@ struct NetworkController::Impl {
         }
 
         cJSON* root = cJSON_CreateObject();
+        if (root == nullptr) {
+            return httpd_resp_send_err(
+                req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+        }
         cJSON* items = cJSON_AddArrayToObject(root, "actions");
-        if (root == nullptr || items == nullptr) {
-            if (root != nullptr) {
-                cJSON_Delete(root);
-            }
+        if (items == nullptr) {
+            cJSON_Delete(root);
             return httpd_resp_send_err(
                 req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
         }
 
         for (const auto& descriptor : self->actions.list()) {
             cJSON* item = cJSON_CreateObject();
+            if (item == nullptr) {
+                cJSON_Delete(root);
+                return httpd_resp_send_err(
+                    req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+            }
             cJSON_AddStringToObject(item, "id", descriptor.id.c_str());
             cJSON_AddStringToObject(item, "name", descriptor.name.c_str());
             cJSON_AddStringToObject(item, "description", descriptor.description.c_str());
             cJSON_AddStringToObject(item, "capability", descriptor.capability.c_str());
             cJSON* parameters = cJSON_AddArrayToObject(item, "parameters");
+            if (parameters == nullptr) {
+                cJSON_Delete(item);
+                cJSON_Delete(root);
+                return httpd_resp_send_err(
+                    req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+            }
             for (const auto& parameter : descriptor.parameters) {
-                cJSON_AddItemToArray(parameters, cJSON_CreateString(parameter.c_str()));
+                cJSON* value = cJSON_CreateString(parameter.c_str());
+                if (value == nullptr) {
+                    cJSON_Delete(item);
+                    cJSON_Delete(root);
+                    return httpd_resp_send_err(
+                        req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+                }
+                cJSON_AddItemToArray(parameters, value);
             }
             cJSON_AddItemToArray(items, item);
         }
