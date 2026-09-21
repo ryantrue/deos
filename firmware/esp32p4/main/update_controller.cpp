@@ -5,7 +5,11 @@
 #include "network_controller.hpp"
 
 #include "esp_check.h"
-#include "esp_http_server.h"\n#include "esp_http_client.h"\n#include "esp_https_ota.h"\n#include "esp_crt_bundle.h"\n#include "cJSON.h"
+#include "esp_http_server.h"
+#include "esp_http_client.h"
+#include "esp_https_ota.h"
+#include "esp_crt_bundle.h"
+#include "cJSON.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -65,7 +69,8 @@ void reboot_after_ota(void*) {
 
 struct UpdateController::Impl {
     NetworkController& network;
-    bool registered{false};\n    bool dev_auto_update_started{false};
+    bool registered{false};
+    bool dev_auto_update_started{false};
 
     explicit Impl(NetworkController& network_controller)
         : network(network_controller) {}
