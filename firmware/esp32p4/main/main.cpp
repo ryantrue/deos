@@ -11,6 +11,7 @@
 #include "resource_runtime.hpp"
 #include "shell_controller.hpp"
 #include "storage_controller.hpp"
+#include "telemetry_service.hpp"
 #include "touch_controller.hpp"
 #include "update_controller.hpp"
 
@@ -89,6 +90,7 @@ extern "C" void app_main(void) {
     static deos::ActionRegistry actions(&system_events);
     static deos::platform::DevicePreferences preferences;
     static deos::platform::ResourceRuntime resource_runtime(engine);
+    static deos::platform::TelemetryService telemetry(entities);
 
     if (!preferences.initialize()) {
         ESP_LOGW(TAG, "preferences unavailable; using runtime defaults");
@@ -100,6 +102,21 @@ extern "C" void app_main(void) {
         (void)entities.register_entity(
             {"system.ready", "System ready", "System/device", ""},
             false);
+        (void)entities.register_entity(
+            {"system.uptime_sec", "System uptime", "Telemetry/system", "s"},
+            static_cast<std::int64_t>(0));
+        (void)entities.register_entity(
+            {"system.internal_free_bytes", "Internal RAM free", "Telemetry/system", "B"},
+            static_cast<std::int64_t>(0));
+        (void)entities.register_entity(
+            {"system.internal_largest_bytes", "Largest internal block", "Telemetry/system", "B"},
+            static_cast<std::int64_t>(0));
+        (void)entities.register_entity(
+            {"system.psram_free_bytes", "PSRAM free", "Telemetry/system", "B"},
+            static_cast<std::int64_t>(0));
+        (void)entities.register_entity(
+            {"system.tasks", "FreeRTOS tasks", "Telemetry/system", ""},
+            static_cast<std::int64_t>(0));
         (void)entities.register_entity(
             {"display.brightness", "Display brightness", "Display/primary", "%"},
             static_cast<std::int64_t>(initial_brightness));
@@ -124,6 +141,10 @@ extern "C" void app_main(void) {
         (void)entities.register_entity(
             {"network.ssid", "Network SSID", "Network/wifi", ""},
             std::string(""));
+    }
+
+    if (!telemetry.start()) {
+        ESP_LOGW(TAG, "system telemetry unavailable");
     }
 
     static auto system_controller = std::make_shared<SystemController>();
