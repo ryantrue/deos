@@ -2,6 +2,7 @@
 
 #include "ui_shell.hpp"
 #include "ui_navigation.hpp"
+#include "ui_settings_screen.hpp"
 #include "ui_home_screen.hpp"
 #include "ui_theme.hpp"
 #include "ui_widgets.hpp"
@@ -791,43 +792,18 @@ struct ShellUi::Impl {
 
     void show_settings() {
         lv_obj_t* screen = begin_screen("Settings", true);
-
-        lv_obj_t* body = lv_obj_create(screen);
-        lv_obj_set_pos(body, 24, kHeaderHeight);
-        lv_obj_set_size(body, 672, 574);
-        lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(body, 0, 0);
-        lv_obj_set_style_pad_all(body, 10, 0);
-        lv_obj_set_style_pad_row(body, 10, 0);
-        lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
-
-        lv_obj_t* network_row = settings_row(body, "Network", "Wi-Fi and local control plane");
-        lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* display_row = settings_row(body, "Display", "Brightness and screen behavior");
-        lv_obj_add_event_cb(display_row, on_display, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* storage_row = settings_row(body, "Storage", "SD card and DEOS volume");
-        lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* update_row = settings_row(body, "Software Update", "A/B OTA and build status");
-        lv_obj_add_event_cb(update_row, on_update, LV_EVENT_CLICKED, this);
-
-        if (developer_mode) {
-            lv_obj_t* developer = settings_row(body, "Developer", "Diagnostics and debug tools");
-            lv_obj_add_event_cb(developer, on_developer, LV_EVENT_CLICKED, this);
-        }
-
-        lv_obj_t* about = settings_row(body, "About DEOS", "System, build and hardware");
-        lv_obj_add_event_cb(about, on_system, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* note = label(
-            body,
-            developer_mode
-                ? "Developer Mode is enabled and persists across reboot."
-                : "Developer controls stay hidden during normal use.",
-            color(0x606B77));
-        lv_obj_set_style_pad_top(note, 8, 0);
+        build_settings_screen(
+            screen,
+            SettingsState{.developer_mode = developer_mode},
+            SettingsCallbacks{
+                .network = on_network,
+                .display = on_display,
+                .storage = on_storage,
+                .update = on_update,
+                .developer = on_developer,
+                .system = on_system,
+                .user_data = this,
+            });
     }
 
     void add_info_row(lv_obj_t* parent, const char* key, const std::string& value) {
