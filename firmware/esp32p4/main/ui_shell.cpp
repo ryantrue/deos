@@ -486,7 +486,18 @@ struct ShellUi::Impl {
 
     std::string entity_text(std::string_view id, std::string fallback) const {
         const auto snapshot = entities.get(id);
-        return snapshot.has_value() ? deos::to_string(snapshot->value) : std::move(fallback);
+        return snapshot.has_value() ? deos::to_string(snapshot->value) : fallback;
+    }
+
+    std::int64_t entity_integer(std::string_view id, std::int64_t fallback) const {
+        const auto snapshot = entities.get(id);
+        if (!snapshot.has_value()) {
+            return fallback;
+        }
+        if (const auto* value = std::get_if<std::int64_t>(&snapshot->value)) {
+            return *value;
+        }
+        return fallback;
     }
 
     bool entity_bool(std::string_view id, bool fallback) const {
@@ -1100,16 +1111,33 @@ struct ShellUi::Impl {
         const platform::SdVolumeSnapshot sd = storage.snapshot();
         const esp_partition_t* running = esp_ota_get_running_partition();
 
-        const uint64_t uptime_sec =
-            static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
+        const std::int64_t uptime_sec = entity_integer(
+            "system.uptime_sec",
+            static_cast<std::int64_t>(esp_timer_get_time() / 1000000ULL));
+        const std::int64_t task_count = entity_integer(
+            "system.tasks",
+            static_cast<std::int64_t>(uxTaskGetNumberOfTasks()));
+        const std::int64_t internal_free = entity_integer(
+            "system.internal_free_bytes",
+            static_cast<std::int64_t>(
+                heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        const std::int64_t internal_largest = entity_integer(
+            "system.internal_largest_bytes",
+            static_cast<std::int64_t>(
+                heap_caps_get_largest_free_block(
+                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        const std::int64_t psram_free = entity_integer(
+            "system.psram_free_bytes",
+            static_cast<std::int64_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+
         add_info_row(card, "Uptime", std::to_string(uptime_sec) + " s");
-        add_info_row(card, "Tasks", std::to_string(uxTaskGetNumberOfTasks()));
+        add_info_row(card, "Tasks", std::to_string(task_count));
         add_info_row(card, "Internal free",
-                     bytes_human(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+                     bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, internal_free))));
         add_info_row(card, "Largest internal",
-                     bytes_human(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+                     bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, internal_largest))));
         add_info_row(card, "PSRAM free",
-                     bytes_human(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+                     bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, psram_free))));
         add_info_row(card, "Network",
                      net.provisioning
                          ? "setup-ap"
@@ -1209,10 +1237,25 @@ struct ShellUi::Impl {
 
         add_info_row(card, "Board", "Waveshare ESP32-P4 4B");
         add_info_row(card, "CPU", "ESP32-P4 @ 360 MHz");
-        add_info_row(card, "PSRAM free",
-                     bytes_human(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
-        add_info_row(card, "Internal RAM free",
-                     bytes_human(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        add_info_row(
+            card,
+            "PSRAM free",
+            bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(
+                0,
+                entity_integer(
+                    "system.psram_free_bytes",
+                    static_cast<std::int64_t>(
+                        heap_caps_get_free_size(MALLOC_CAP_SPIRAM)))))));
+        add_info_row(
+            card,
+            "Internal RAM free",
+            bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(
+                0,
+                entity_integer(
+                    "system.internal_free_bytes",
+                    static_cast<std::int64_t>(
+                        heap_caps_get_free_size(
+                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)))))));
         add_info_row(card, "Flash", "32 MB");
         add_info_row(card, "ESP-IDF", app != nullptr ? app->idf_ver : "unknown");
         add_info_row(card, "Build", app != nullptr ? app->version : "unknown");
