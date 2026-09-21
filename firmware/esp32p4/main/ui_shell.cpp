@@ -77,6 +77,10 @@ std::string bytes_human(uint64_t bytes) {
 
 struct ShellUi::Impl {
     enum class ScreenId {
+        FirstRunWelcome,
+        FirstRunNetwork,
+        FirstRunStorage,
+        FirstRunReady,
         Home,
         QuickSettings,
         Settings,
@@ -122,6 +126,7 @@ struct ShellUi::Impl {
     std::string wifi_selected_ssid;
     std::string wifi_join_error;
     bool wifi_selected_secured{false};
+    bool onboarding_wifi_flow{false};
     std::vector<platform::WifiScanEntry> wifi_scan_entries;
     int developer_taps{0};
     bool developer_mode{false};
@@ -309,6 +314,10 @@ struct ShellUi::Impl {
     void render_screen(ScreenId screen) {
         current_screen = screen;
         switch (screen) {
+            case ScreenId::FirstRunWelcome: show_first_run_welcome(); break;
+            case ScreenId::FirstRunNetwork: show_first_run_network(); break;
+            case ScreenId::FirstRunStorage: show_first_run_storage(); break;
+            case ScreenId::FirstRunReady: show_first_run_done(); break;
             case ScreenId::Home: show_home(); break;
             case ScreenId::QuickSettings: show_quick_settings(); break;
             case ScreenId::Settings: show_settings(); break;
@@ -490,14 +499,22 @@ struct ShellUi::Impl {
             lv_obj_set_pos(local_name, 0, 162);
         }
 
+        if (net.initialized) {
+            lv_obj_t* choose = make_action(
+                screen, "Choose Wi-Fi here", color(0x245BA5), color(0xFFFFFF), 672);
+            lv_obj_set_pos(choose, 24, 536);
+            lv_obj_add_event_cb(
+                choose, on_first_run_wifi_scan, LV_EVENT_CLICKED, this);
+        }
+
         lv_obj_t* later = make_action(
             screen, "Skip network", color(0x20252D), color(0xDCE3EA), 232);
-        lv_obj_set_pos(later, 24, 568);
+        lv_obj_set_pos(later, 24, 610);
         lv_obj_add_event_cb(later, on_first_run_storage, LV_EVENT_CLICKED, this);
 
         lv_obj_t* next = make_action(
             screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 420);
-        lv_obj_set_pos(next, 276, 568);
+        lv_obj_set_pos(next, 276, 610);
         lv_obj_add_event_cb(next, on_first_run_storage, LV_EVENT_CLICKED, this);
     }
 
@@ -1753,15 +1770,29 @@ struct ShellUi::Impl {
     }
 
     static void on_first_run_network(lv_event_t* event) {
-        self(event)->show_first_run_network();
+        Impl* ui = self(event);
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Network);
+        ui->render_screen(ScreenId::FirstRunNetwork);
+    }
+
+    static void on_first_run_wifi_scan(lv_event_t* event) {
+        Impl* ui = self(event);
+        ui->onboarding_wifi_flow = true;
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Network);
+        ui->navigate(ScreenId::WifiScan);
     }
 
     static void on_first_run_storage(lv_event_t* event) {
-        self(event)->show_first_run_storage();
+        Impl* ui = self(event);
+        ui->onboarding_wifi_flow = false;
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Storage);
+        ui->render_screen(ScreenId::FirstRunStorage);
     }
 
     static void on_first_run_done(lv_event_t* event) {
-        self(event)->show_first_run_done();
+        Impl* ui = self(event);
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Ready);
+        ui->render_screen(ScreenId::FirstRunReady);
     }
 
     static void on_first_run_finish(lv_event_t* event) {
@@ -1850,7 +1881,9 @@ struct ShellUi::Impl {
     }
 
     static void on_wifi_scan(lv_event_t* event) {
-        self(event)->navigate(ScreenId::WifiScan);
+        Impl* ui = self(event);
+        ui->onboarding_wifi_flow = false;
+        ui->navigate(ScreenId::WifiScan);
     }
 
     static void on_wifi_rescan(lv_event_t* event) {
@@ -1896,6 +1929,14 @@ struct ShellUi::Impl {
             }
         }
 
+        if (ui->onboarding_wifi_flow) {
+            if (!ui->preferences.set_setup_step(platform::SetupStep::Storage)) {
+                ui->wifi_join_error = "Could not save setup progress.";
+                ui->render_screen(ScreenId::WifiCredentials);
+                return;
+            }
+        }
+
         const deos::ActionContext context{
             "shell",
             {"network.credentials"},
@@ -1909,6 +1950,9 @@ struct ShellUi::Impl {
             });
 
         if (!result.ok) {
+            if (ui->onboarding_wifi_flow) {
+                (void)ui->preferences.set_setup_step(platform::SetupStep::Network);
+            }
             ui->wifi_join_error = result.message;
             ui->render_screen(ScreenId::WifiCredentials);
             return;
@@ -2058,8 +2102,22 @@ ShellUi::~ShellUi() = default;
 void ShellUi::create() {
     if (impl_->preferences.setup_completed()) {
         impl_->go_home();
-    } else {
-        impl_->show_first_run_welcome();
+        return;
+    }
+
+    switch (impl_->preferences.setup_step()) {
+        case platform::SetupStep::Welcome:
+            impl_->render_screen(Impl::ScreenId::FirstRunWelcome);
+            break;
+        case platform::SetupStep::Network:
+            impl_->render_screen(Impl::ScreenId::FirstRunNetwork);
+            break;
+        case platform::SetupStep::Storage:
+            impl_->render_screen(Impl::ScreenId::FirstRunStorage);
+            break;
+        case platform::SetupStep::Ready:
+            impl_->render_screen(Impl::ScreenId::FirstRunReady);
+            break;
     }
 }
 
