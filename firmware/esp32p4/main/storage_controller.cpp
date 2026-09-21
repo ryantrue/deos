@@ -91,6 +91,8 @@ const char* to_string(SdVolumeState state) noexcept {
 }
 
 struct StorageController::Impl {
+    EntityRegistry& entities;
+
     enum class Operation {
         None,
         Probe,
@@ -105,7 +107,8 @@ struct StorageController::Impl {
     SdVolumeSnapshot status{};
     Operation operation{Operation::None};
 
-    Impl() {
+    explicit Impl(EntityRegistry& entity_registry)
+        : entities(entity_registry) {
         mutex = xSemaphoreCreateMutex();
         status.state = SdVolumeState::Unknown;
         status.message = "SD storage not probed yet";
@@ -140,6 +143,8 @@ struct StorageController::Impl {
         status.message = std::move(message);
         status.operation = std::move(op);
         unlock();
+
+        (void)entities.set("storage.sd.state", std::string(to_string(state)));
     }
 
     void update_capacity() {
@@ -530,7 +535,8 @@ struct StorageController::Impl {
     }
 };
 
-StorageController::StorageController() : impl_(std::make_unique<Impl>()) {}
+StorageController::StorageController(EntityRegistry& entities)
+    : impl_(std::make_unique<Impl>(entities)) {}
 StorageController::~StorageController() = default;
 
 bool StorageController::supports(std::string_view kind) const {
