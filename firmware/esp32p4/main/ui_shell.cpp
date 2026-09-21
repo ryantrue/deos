@@ -112,6 +112,8 @@ struct ShellUi::Impl {
     lv_timer_t* storage_timer{nullptr};
     lv_timer_t* home_timer{nullptr};
     lv_timer_t* wifi_scan_timer{nullptr};
+    lv_timer_t* toast_timer{nullptr};
+    lv_obj_t* toast_obj{nullptr};
     lv_obj_t* storage_body{nullptr};
     lv_obj_t* wifi_scan_body{nullptr};
     lv_obj_t* wifi_password_area{nullptr};
@@ -167,6 +169,11 @@ struct ShellUi::Impl {
             lv_timer_delete(wifi_scan_timer);
             wifi_scan_timer = nullptr;
         }
+        if (toast_timer != nullptr) {
+            lv_timer_delete(toast_timer);
+            toast_timer = nullptr;
+        }
+        toast_obj = nullptr;
         storage_body = nullptr;
         wifi_scan_body = nullptr;
         wifi_password_area = nullptr;
@@ -311,6 +318,52 @@ struct ShellUi::Impl {
         return button;
     }
 
+    void dismiss_toast() {
+        if (toast_timer != nullptr) {
+            lv_timer_delete(toast_timer);
+            toast_timer = nullptr;
+        }
+        if (toast_obj != nullptr && lv_obj_is_valid(toast_obj)) {
+            lv_obj_delete(toast_obj);
+        }
+        toast_obj = nullptr;
+    }
+
+    void show_toast(const std::string& message, bool success = true) {
+        dismiss_toast();
+
+        lv_obj_t* screen = lv_screen_active();
+        toast_obj = lv_obj_create(screen);
+        lv_obj_set_size(toast_obj, 620, 62);
+        lv_obj_align(toast_obj, LV_ALIGN_BOTTOM_MID, 0, -24);
+        lv_obj_remove_flag(toast_obj, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(
+            toast_obj,
+            success ? color(0x173024) : color(0x3A2023),
+            0);
+        lv_obj_set_style_bg_opa(toast_obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(toast_obj, 1, 0);
+        lv_obj_set_style_border_color(
+            toast_obj,
+            success ? color(0x2D6A4B) : color(0x7A343D),
+            0);
+        lv_obj_set_style_radius(toast_obj, 22, 0);
+        lv_obj_set_style_pad_all(toast_obj, 16, 0);
+
+        lv_obj_t* text = make_label(
+            toast_obj,
+            message.c_str(),
+            success ? color(0xBDE8CF) : color(0xF3BEC3),
+            &lv_font_montserrat_20);
+        lv_obj_center(text);
+
+        lv_obj_move_foreground(toast_obj);
+        lv_obj_fade_in(toast_obj, 90, 0);
+
+        toast_timer = lv_timer_create(on_toast_timer, 1500, this);
+        lv_timer_set_repeat_count(toast_timer, 1);
+    }
+
     void render_screen(ScreenId screen) {
         current_screen = screen;
         switch (screen) {
@@ -335,6 +388,11 @@ struct ShellUi::Impl {
             case ScreenId::ForgetWifiConfirm: show_forget_wifi_confirm(); break;
             case ScreenId::Storage: show_storage(); break;
             case ScreenId::FormatConfirm: show_format_confirm(); break;
+        }
+
+        lv_obj_t* active = lv_screen_active();
+        if (active != nullptr) {
+            lv_obj_fade_in(active, 120, 0);
         }
     }
 
@@ -2070,6 +2128,19 @@ struct ShellUi::Impl {
         ui->developer_taps = 0;
         (void)ui->preferences.set_developer_mode(false);
         ui->go_back();
+    }
+
+    static void on_toast_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui == nullptr) {
+            return;
+        }
+
+        ui->toast_timer = nullptr;
+        if (ui->toast_obj != nullptr && lv_obj_is_valid(ui->toast_obj)) {
+            lv_obj_delete(ui->toast_obj);
+        }
+        ui->toast_obj = nullptr;
     }
 
     static void on_home_timer(lv_timer_t* timer) {
