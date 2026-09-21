@@ -777,9 +777,9 @@ struct ShellUi::Impl {
             body, "Storage", platform::to_string(sd.state));
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* settings_row = settings_row(
+        lv_obj_t* settings_item = settings_row(
             body, "Settings", "All device configuration");
-        lv_obj_add_event_cb(settings_row, on_settings, LV_EVENT_CLICKED, this);
+        lv_obj_add_event_cb(settings_item, on_settings, LV_EVENT_CLICKED, this);
 
         lv_obj_t* system_row = settings_row(
             body, "About this device", "Build, runtime and hardware status");
