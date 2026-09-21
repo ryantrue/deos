@@ -1450,7 +1450,12 @@ struct ShellUi::Impl {
 
     static void on_forget_wifi(lv_event_t* event) {
         Impl* ui = self(event);
-        if (ui->network.forget_wifi_and_reboot()) {
+        const deos::ActionContext context{
+            "shell",
+            {"network.control"},
+        };
+        const auto result = ui->actions.invoke("network.wifi.forget", context);
+        if (result.ok) {
             lv_obj_t* screen = ui->begin_screen("Rebooting", false);
             lv_obj_t* message = make_label(
                 screen,
@@ -1459,6 +1464,7 @@ struct ShellUi::Impl {
                 &lv_font_montserrat_20);
             lv_obj_set_pos(message, 48, 180);
         } else {
+            ESP_LOGW("deos-ui", "forget Wi-Fi action failed: %s", result.message.c_str());
             ui->show_network();
         }
     }
@@ -1469,13 +1475,27 @@ struct ShellUi::Impl {
 
     static void on_rescan_sd(lv_event_t* event) {
         Impl* ui = self(event);
-        (void)ui->storage.request_rescan();
+        const deos::ActionContext context{
+            "shell",
+            {"storage.control"},
+        };
+        const auto result = ui->actions.invoke("storage.sd.rescan", context);
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "SD rescan action failed: %s", result.message.c_str());
+        }
         ui->show_storage();
     }
 
     static void on_initialize_sd(lv_event_t* event) {
         Impl* ui = self(event);
-        (void)ui->storage.request_initialize_for_deos();
+        const deos::ActionContext context{
+            "shell",
+            {"storage.control"},
+        };
+        const auto result = ui->actions.invoke("storage.sd.initialize", context);
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "SD initialize action failed: %s", result.message.c_str());
+        }
         ui->show_storage();
     }
 
@@ -1485,7 +1505,14 @@ struct ShellUi::Impl {
 
     static void on_format_sd(lv_event_t* event) {
         Impl* ui = self(event);
-        (void)ui->storage.request_format_for_deos();
+        const deos::ActionContext context{
+            "shell",
+            {"storage.destructive"},
+        };
+        const auto result = ui->actions.invoke("storage.sd.format", context);
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "SD format action failed: %s", result.message.c_str());
+        }
         ui->show_storage();
     }
 
