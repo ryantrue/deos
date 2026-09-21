@@ -5,7 +5,7 @@
 #include "network_controller.hpp"
 
 #include "esp_check.h"
-#include "esp_http_server.h"
+#include "esp_http_server.h"\n#include "esp_http_client.h"\n#include "esp_https_ota.h"\n#include "esp_crt_bundle.h"\n#include "cJSON.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -27,6 +27,34 @@ namespace {
 constexpr char kTag[] = "deos-update";
 constexpr size_t kChunkSize = 4096;
 constexpr unsigned kMaxConsecutiveReceiveTimeouts = 5;
+constexpr char kDevManifestUrl[] =
+    "https://github.com/ryantrue/deos/releases/download/dev-p4-latest/dev-ota.json";
+constexpr size_t kManifestMaxBytes = 1024;
+
+#ifndef DEOS_SOURCE_SHA
+#define DEOS_SOURCE_SHA "local"
+#endif
+
+struct ManifestBuffer {
+    std::string body;
+};
+
+esp_err_t manifest_http_event(esp_http_client_event_t* event) {
+    auto* buffer = static_cast<ManifestBuffer*>(event->user_data);
+    if (buffer == nullptr) {
+        return ESP_OK;
+    }
+    if (event->event_id == HTTP_EVENT_ON_DATA && event->data != nullptr &&
+        event->data_len > 0) {
+        if (buffer->body.size() + static_cast<size_t>(event->data_len) >
+            kManifestMaxBytes) {
+            return ESP_FAIL;
+        }
+        buffer->body.append(static_cast<const char*>(event->data),
+                            static_cast<size_t>(event->data_len));
+    }
+    return ESP_OK;
+}
 
 void reboot_after_ota(void*) {
     vTaskDelay(pdMS_TO_TICKS(900));
@@ -37,7 +65,7 @@ void reboot_after_ota(void*) {
 
 struct UpdateController::Impl {
     NetworkController& network;
-    bool registered{false};
+    bool registered{false};\n    bool dev_auto_update_started{false};
 
     explicit Impl(NetworkController& network_controller)
         : network(network_controller) {}
