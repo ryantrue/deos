@@ -81,9 +81,15 @@ struct ShellUi::Impl {
     platform::NetworkController& network;
     platform::StorageController& storage;
     lv_timer_t* storage_timer{nullptr};
+    lv_timer_t* home_timer{nullptr};
     lv_obj_t* storage_body{nullptr};
     lv_obj_t* brightness_value_label{nullptr};
+    lv_obj_t* home_system_value_label{nullptr};
+    lv_obj_t* home_storage_value_label{nullptr};
+    lv_obj_t* home_control_value_label{nullptr};
+    lv_obj_t* home_settings_value_label{nullptr};
     std::string storage_render_key;
+    std::string home_render_key;
     int developer_taps{0};
     bool developer_mode{false};
 
@@ -112,8 +118,18 @@ struct ShellUi::Impl {
             lv_timer_delete(storage_timer);
             storage_timer = nullptr;
         }
+        if (home_timer != nullptr) {
+            lv_timer_delete(home_timer);
+            home_timer = nullptr;
+        }
         storage_body = nullptr;
+        brightness_value_label = nullptr;
+        home_system_value_label = nullptr;
+        home_storage_value_label = nullptr;
+        home_control_value_label = nullptr;
+        home_settings_value_label = nullptr;
         storage_render_key.clear();
+        home_render_key.clear();
     }
 
     lv_obj_t* begin_screen(const char* title, bool show_back) {
@@ -468,6 +484,78 @@ struct ShellUi::Impl {
         lv_obj_add_event_cb(home, on_first_run_finish, LV_EVENT_CLICKED, this);
     }
 
+    std::string entity_text(std::string_view id, std::string fallback) const {
+        const auto snapshot = entities.get(id);
+        return snapshot.has_value() ? deos::to_string(snapshot->value) : std::move(fallback);
+    }
+
+    bool entity_bool(std::string_view id, bool fallback) const {
+        const auto snapshot = entities.get(id);
+        if (!snapshot.has_value()) {
+            return fallback;
+        }
+        if (const auto* value = std::get_if<bool>(&snapshot->value)) {
+            return *value;
+        }
+        return fallback;
+    }
+
+    void refresh_home_live() {
+        if (home_system_value_label == nullptr ||
+            home_storage_value_label == nullptr ||
+            home_control_value_label == nullptr ||
+            home_settings_value_label == nullptr) {
+            return;
+        }
+
+        const bool ready = entity_bool("system.ready", false);
+        const std::string storage_state =
+            entity_text("storage.sd.state", "unknown");
+        const std::string network_mode =
+            entity_text("network.mode", "offline");
+        const std::string network_ip =
+            entity_text("network.ip", "");
+        const std::string brightness =
+            entity_text("display.brightness", "72");
+
+        const std::string render_key =
+            std::string(ready ? "1" : "0") + "|" +
+            storage_state + "|" + network_mode + "|" + network_ip + "|" +
+            brightness + "|" + std::to_string(entities.size()) + "|" +
+            std::to_string(actions.size());
+
+        if (render_key == home_render_key) {
+            return;
+        }
+        home_render_key = render_key;
+
+        lv_label_set_text(home_system_value_label, ready ? "READY" : "STARTING");
+        lv_obj_set_style_text_color(
+            home_system_value_label,
+            ready ? color(0x71D99C) : color(0xE1C777),
+            0);
+
+        lv_label_set_text(home_storage_value_label, storage_state.c_str());
+        lv_obj_set_style_text_color(
+            home_storage_value_label,
+            storage_state == "ready" ? color(0xD8D68A) : color(0xA8A570),
+            0);
+
+        const std::string model_count =
+            std::to_string(entities.size()) + " states · " +
+            std::to_string(actions.size()) + " actions";
+        lv_label_set_text(home_control_value_label, model_count.c_str());
+
+        std::string connectivity =
+            network_mode == "setup-ap"
+                ? "Wi-Fi setup"
+                : (network_mode == "station"
+                       ? (network_ip.empty() ? "Wi-Fi connecting" : network_ip)
+                       : "Offline");
+        connectivity += "  ·  " + brightness + "% brightness";
+        lv_label_set_text(home_settings_value_label, connectivity.c_str());
+    }
+
     void show_home() {
         lv_obj_t* screen = begin_screen("Home", false);
 
@@ -490,8 +578,9 @@ struct ShellUi::Impl {
         lv_obj_t* system = make_tile(
             screen, 480, 112, col, "System", "Device health",
             color(0x171B21), color(0x2A3039));
-        lv_obj_t* sys_value = make_label(system, "READY", color(0x71D99C), &lv_font_montserrat_20);
-        lv_obj_set_pos(sys_value, 0, 84);
+        home_system_value_label = make_label(
+            system, "STARTING", color(0xE1C777), &lv_font_montserrat_20);
+        lv_obj_set_pos(home_system_value_label, 0, 84);
         lv_obj_add_event_cb(system, on_system, LV_EVENT_CLICKED, this);
 
         lv_obj_t* control = make_tile(
@@ -500,8 +589,9 @@ struct ShellUi::Impl {
         const std::string model_count =
             std::to_string(entities.size()) + " states · " +
             std::to_string(actions.size()) + " actions";
-        lv_obj_t* c = make_label(control, model_count.c_str(), color(0x9EE2BB));
-        lv_obj_set_pos(c, 0, 84);
+        home_control_value_label =
+            make_label(control, model_count.c_str(), color(0x9EE2BB));
+        lv_obj_set_pos(home_control_value_label, 0, 84);
         lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
 
         lv_obj_t* automations = make_tile(
@@ -515,13 +605,13 @@ struct ShellUi::Impl {
         lv_obj_t* files = make_tile(
             screen, 480, 270, col, "Storage", "Internal + SD",
             color(0x202117), color(0x55562A));
-        lv_obj_t* sd_state = make_label(
+        home_storage_value_label = make_label(
             files,
             platform::to_string(sd.state),
             sd.state == platform::SdVolumeState::Ready
                 ? color(0xD8D68A)
                 : color(0xA8A570));
-        lv_obj_set_pos(sd_state, 0, 84);
+        lv_obj_set_pos(home_storage_value_label, 0, 84);
         lv_obj_add_event_cb(files, on_storage, LV_EVENT_CLICKED, this);
 
         lv_obj_t* apps = make_tile(
@@ -534,9 +624,9 @@ struct ShellUi::Impl {
         lv_obj_t* settings = make_tile(
             screen, 252, 428, wide, "Settings", "Network, display, storage, developer",
             color(0x171B21), color(0x2A3039));
-        lv_obj_t* settings_hint = make_label(
-            settings, "Everything locally configurable", color(0x8C97A4));
-        lv_obj_set_pos(settings_hint, 0, 84);
+        home_settings_value_label = make_label(
+            settings, "Loading device state...", color(0x8C97A4));
+        lv_obj_set_pos(home_settings_value_label, 0, 84);
         lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
 
         lv_obj_t* dock = lv_obj_create(screen);
@@ -574,6 +664,9 @@ struct ShellUi::Impl {
         (void)control;
         (void)automations;
         (void)apps;
+
+        refresh_home_live();
+        home_timer = lv_timer_create(on_home_timer, 750, this);
     }
 
     lv_obj_t* make_info_card(lv_obj_t* screen,
@@ -1543,6 +1636,13 @@ struct ShellUi::Impl {
         ui->developer_taps = 0;
         (void)ui->preferences.set_developer_mode(false);
         ui->show_settings();
+    }
+
+    static void on_home_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui != nullptr) {
+            ui->refresh_home_live();
+        }
     }
 
     static void on_storage_timer(lv_timer_t* timer) {
