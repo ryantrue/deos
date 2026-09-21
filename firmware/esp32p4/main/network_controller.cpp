@@ -857,6 +857,8 @@ struct NetworkController::Impl {
         unlock_state();
         (void)entities.set("network.connected", false);
         (void)entities.set("network.ip", std::string("192.168.4.1"));
+        (void)entities.set("network.mode", std::string("setup-ap"));
+        (void)entities.set("network.ssid", ap_ssid);
         ESP_LOGW(kTag, "No Wi-Fi profile found");
         ESP_LOGW(kTag, "Setup AP: %s", ap_ssid.c_str());
         ESP_LOGW(kTag, "Setup password: %s", ap_password.c_str());
@@ -874,6 +876,8 @@ struct NetworkController::Impl {
         unlock_state();
         (void)entities.set("network.connected", false);
         (void)entities.set("network.ip", std::string(""));
+        (void)entities.set("network.mode", std::string("station"));
+        (void)entities.set("network.ssid", station_ssid);
 
         netif = esp_netif_create_default_wifi_sta();
         if (netif == nullptr) {
