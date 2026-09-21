@@ -67,7 +67,8 @@ jobs:
 
           grep -Fq 'dpi.num_fbs = 2;' "$display"
           grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
-          grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
+          grep -Fq 'LV_DISPLAY_RENDER_MODE_DIRECT' "$display"
+          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
           ! grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
 
           grep -Fq 'data->point.x = self->last_x;' "$touch"
