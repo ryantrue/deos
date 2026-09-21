@@ -100,6 +100,7 @@ Pass when:
 - station mode obtains an IP address;
 - `deos.local` resolves on a compatible LAN;
 - the setup AP remains a fallback path when no station profile exists;
+- setup identity generation never aborts when the P4 has no local Wi-Fi MAC;
 - forgetting Wi-Fi preserves device/API identity but removes SSID/password;
 - after forget + reboot, provisioning is available again.
 

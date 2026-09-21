@@ -10,7 +10,6 @@
 #include "esp_event.h"
 #include "esp_hosted.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
@@ -591,17 +590,38 @@ struct NetworkController::Impl {
 
     void derive_setup_credentials() {
         uint8_t mac[6]{};
-        ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_STA));
+        const esp_err_t mac_err = esp_wifi_get_mac(WIFI_IF_STA, mac);
+
+        const std::string current_token = token_copy();
+        char suffix[5]{};
+        if (mac_err == ESP_OK) {
+            std::snprintf(suffix, sizeof(suffix), "%02X%02X", mac[4], mac[5]);
+        } else if (current_token.size() >= 4) {
+            const size_t start = current_token.size() - 4;
+            for (size_t i = 0; i < 4; ++i) {
+                suffix[i] = static_cast<char>(
+                    std::toupper(static_cast<unsigned char>(current_token[start + i])));
+            }
+            ESP_LOGW(
+                kTag,
+                "remote Wi-Fi MAC unavailable (%s); using persisted device identity",
+                esp_err_to_name(mac_err));
+        } else {
+            const uint32_t fallback = esp_random();
+            std::snprintf(suffix, sizeof(suffix), "%04X",
+                          static_cast<unsigned>(fallback & 0xffffU));
+            ESP_LOGW(
+                kTag,
+                "remote Wi-Fi MAC and persisted identity unavailable; using runtime suffix");
+        }
 
         char ssid[32]{};
         std::snprintf(
             ssid,
             sizeof(ssid),
-            "DEOS-SETUP-%02X%02X",
-            mac[4],
-            mac[5]);
+            "DEOS-SETUP-%s",
+            suffix);
 
-        const std::string current_token = token_copy();
         std::string password =
             current_token.size() >= 12
                 ? "deos-" + current_token.substr(0, 8)
