@@ -171,3 +171,43 @@ Settings exposes a read-only **Software Update** system surface. It shows:
 - whether `Update/system` is currently Ready.
 
 The shell does not write flash directly. Developer uploads still flow through the `Update/system` resource/control-plane endpoint, and the UI only exposes system state and guidance.
+
+
+## Navigation contract
+
+The 720x720 shell has one root: Home.
+
+System screens use a small bounded navigation stack rather than treating Back as a synonym for Home:
+
+```text
+Home
+  → Settings
+      → Storage
+          → Format confirmation
+              ← Storage
+      ← Settings
+  ← Home
+```
+
+Quick Settings behaves like system chrome: when opened from a secondary screen, Back returns to that screen. Home explicitly clears navigation history.
+
+DEOS intentionally does not implement desktop-style windows.
+
+## On-device Wi-Fi setup
+
+The setup AP and browser page remain as a recovery/fallback path, but they are no longer intended to be the primary UX.
+
+From `Settings → Network` the device can:
+
+1. scan nearby access points asynchronously;
+2. show RSSI, channel and whether the network is secured;
+3. select an SSID on the touchscreen;
+4. enter the password using the system LVGL keyboard;
+5. save credentials through the capability-gated `network.wifi.configure` action;
+6. reboot and connect as a station.
+
+The shell receives the `network.credentials` capability. The generic remote API intentionally does not, so discovery of an action does not imply permission to invoke it.
+
+Scanning runs outside the LVGL thread. A slow radio scan must not freeze touch/rendering.
+
+The browser-based setup network remains useful when touch/input is unavailable or during hardware recovery.
