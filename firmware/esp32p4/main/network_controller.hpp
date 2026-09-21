@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace deos::platform {
 
@@ -21,6 +22,19 @@ struct NetworkSnapshot {
     std::string ip;
     std::string setup_ssid;
     std::string setup_password;
+};
+
+struct WifiScanEntry {
+    std::string ssid;
+    int rssi{0};
+    int channel{0};
+    bool secured{false};
+};
+
+struct WifiScanSnapshot {
+    bool scanning{false};
+    std::string error;
+    std::vector<WifiScanEntry> entries;
 };
 
 class NetworkController final : public Controller {
@@ -42,6 +56,11 @@ public:
     std::string setup_password() const;
 
     NetworkSnapshot snapshot() const;
+    WifiScanSnapshot scan_snapshot() const;
+
+    bool request_scan();
+    bool configure_wifi_and_reboot(const std::string& ssid,
+                                   const std::string& password);
     bool forget_wifi_and_reboot();
 
 private:
