@@ -16,33 +16,17 @@ DEOS uses a mobile-style system shell with an adaptive tile home surface. The go
 - once enabled, Developer Mode is stored in device preferences and survives reboot/OTA;
 - Developer Mode has an explicit disable action and never changes the normal boot path.
 
-## First-run experience
+## First boot
 
-The first boot uses the normal system shell, not a separate recovery/setup mode.
-
-If `setup_done` is absent from device preferences, DEOS presents:
-
-```text
-Welcome
-  ↓
-Network
-  ↓
-Storage
-  ↓
-Ready
-  ↓
-Home
-```
+Every boot, including the first one with empty NVS, enters Home directly.
+There is no onboarding route or setup-only operating mode.
 
 Rules:
 
-- every step is optional;
-- **Use now** exits setup immediately and marks first-run complete;
-- networking may still be starting or unavailable without blocking setup;
+- networking may be unavailable without blocking Home;
 - storage is summarized but never modified automatically;
 - destructive SD formatting remains in the regular Storage confirmation flow;
-- completion is stored in NVS and survives OTA;
-- all setup functions remain available later in Settings.
+- all device configuration lives in Settings.
 
 ## Current navigation
 
@@ -211,7 +195,8 @@ DEOS intentionally does not implement desktop-style windows.
 
 ## On-device Wi-Fi setup
 
-The setup AP and browser page remain as a recovery/fallback path, but they are no longer intended to be the primary UX.
+Wi-Fi configuration is part of the operating system Settings surface. DEOS
+does not create a setup AP or expose a browser provisioning form.
 
 From `Settings → Network` the device can:
 
@@ -226,22 +211,5 @@ The shell receives the `network.credentials` capability. The generic remote API 
 
 Scanning runs outside the LVGL thread. A slow radio scan must not freeze touch/rendering.
 
-The browser-based setup network remains useful when touch/input is unavailable or during hardware recovery.
-
-
-## Resumable onboarding
-
-First-run progress is persisted independently of the rendered screen:
-
-```text
-Welcome → Network → Storage → Ready
-```
-
-A reboot does not reset onboarding to Welcome. This matters most during network provisioning:
-
-- the on-device Wi-Fi picker stores `Storage` as the next step before saving credentials and rebooting;
-- the browser fallback stores the same next step before rebooting;
-- after reconnect, DEOS resumes at the Storage policy screen;
-- completing onboarding marks the setup complete and enters Home.
-
-The persisted step is product state, not UI navigation history. Normal Back/Home navigation remains transient.
+If touch/input is unavailable, recovery is performed over the developer UART;
+the device does not silently expose a temporary wireless network.

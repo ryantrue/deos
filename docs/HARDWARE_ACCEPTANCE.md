@@ -71,22 +71,20 @@ Pass when:
 
 If transitions make interaction visibly slower, disable/reduce them rather than accepting degraded input latency.
 
-## 4. First-run flow
+## 4. Direct boot into the operating shell
 
 With NVS cleared, verify:
 
 ```text
-Welcome -> Network -> Storage -> Ready -> Home
+boot -> Home -> Settings
 ```
 
 Pass when:
 
-- every step can be skipped;
-- `Use now` enters Home without requiring network/SD;
-- setup completion persists across reboot;
-- Wi-Fi configuration can reboot the device and resume onboarding at Storage;
-- browser-based Wi-Fi provisioning and on-device Wi-Fi provisioning resume at the same persisted next step;
-- completing first-run does not create a separate permanent operating mode.
+- no welcome wizard or setup-only screen is shown;
+- Home remains usable without network or SD;
+- all device configuration is reachable from normal Settings screens;
+- a legacy onboarding state in NVS cannot divert boot away from Home.
 
 ## 5. Wi-Fi and local control
 
@@ -100,10 +98,10 @@ Pass when:
 - credentials are stored only in device NVS;
 - station mode obtains an IP address;
 - `deos.local` resolves on a compatible LAN;
-- the setup AP remains a fallback path when no station profile exists;
-- setup identity generation never aborts when the P4 has no local Wi-Fi MAC;
+- no setup AP is created when no station profile exists;
+- an empty profile leaves Wi-Fi in unconfigured station mode until the local UI requests a scan;
 - forgetting Wi-Fi preserves device/API identity but removes SSID/password;
-- after forget + reboot, provisioning is available again.
+- after forget + reboot, local Settings can configure Wi-Fi again.
 
 ## 6. State + Actions
 
@@ -263,7 +261,7 @@ PR #3 can merge when:
 - ESP32-P4 ESP-IDF 6.1 CI is green;
 - the complete flash package passes hashes;
 - the local shell/touch/storage tests pass;
-- Wi-Fi provisioning and remote API pass;
+- on-device Wi-Fi configuration and remote API pass;
 - at least one real OTA slot switch succeeds;
 - destructive SD behavior is verified on disposable media or explicitly deferred with the implementation kept disabled.
 

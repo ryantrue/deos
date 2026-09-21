@@ -68,7 +68,7 @@ The reference firmware currently includes:
 - persistent display preferences in NVS;
 - safe SD-card classification, initialization, rescan and explicit formatting;
 - ESP32-C6 networking through ESP-Hosted / Wi-Fi Remote;
-- local provisioning and `deos.local`;
+- on-device Wi-Fi configuration and `deos.local`;
 - remote status, reboot and application OTA through `deosctl`;
 - 32 MB A/B application layout with rollback.
 

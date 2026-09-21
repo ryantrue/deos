@@ -4,25 +4,21 @@ DEOS exposes a small local control plane once `Network/wifi` is reconciled.
 
 This document describes the **developer profile** implemented during the ESP32-P4 bring-up phase. It is intentionally local-first and dependency-light. It is not yet the final production security profile.
 
-## First network provisioning
+## Local network configuration
 
 Wi-Fi credentials are not compiled into firmware and must not be committed to the repository.
 
-If no profile exists in the DEOS NVS namespace, the device creates a WPA2 setup network:
+If no profile exists in the DEOS NVS namespace, DEOS stays local-only and does
+not create an access point. Configure Wi-Fi on the display:
 
 ```text
-DEOS-SETUP-XXXX
+Home -> Settings -> Network -> Choose Wi-Fi
 ```
 
-The generated setup password and DEOS API token are printed to the developer serial console.
-
-1. Join the setup network.
-2. Open `http://192.168.4.1/`.
-3. Enter the target Wi-Fi SSID and password.
-4. DEOS stores them in NVS and reboots.
-5. The device reconnects as a station and advertises `deos.local` over mDNS.
-
-The setup AP is not intended to remain enabled after provisioning.
+Choose an SSID, enter its password with the system keyboard, and confirm.
+DEOS stores the profile in NVS, reboots, connects as a station, and advertises
+`deos.local` over mDNS. The API token is shown only in Developer settings; it
+is never printed in the serial log.
 
 ## Device API
 

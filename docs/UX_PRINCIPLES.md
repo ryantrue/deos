@@ -168,20 +168,17 @@ Marker:
 
 The OS must remain fully usable without SD.
 
-## 7. First-run network UX
+## 7. Network configuration UX
 
 Wi-Fi credentials are never compiled into firmware.
 
 With no saved profile:
 
-1. DEOS starts a temporary setup AP.
-2. The Network screen shows:
-   - setup SSID;
-   - setup password;
-   - local setup address.
-3. The user completes setup locally.
-4. Credentials are stored in device NVS.
-5. DEOS reboots into station mode.
+1. DEOS boots directly to Home in local-only mode.
+2. The user opens `Settings -> Network`.
+3. The device scans only after an explicit touch action.
+4. The user selects an SSID and enters the password on the display.
+5. Credentials are stored in device NVS and DEOS reboots into station mode.
 
 The screen should be understandable without opening a serial console.
 
@@ -189,7 +186,7 @@ Forgetting Wi-Fi:
 
 - removes SSID/password only;
 - preserves DEOS device identity/API token;
-- reboots back into provisioning.
+- reboots back into local-only mode with Network settings available.
 
 ## 8. Developer Mode
 

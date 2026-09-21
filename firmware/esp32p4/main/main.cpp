@@ -302,7 +302,7 @@ extern "C" void app_main(void) {
             {
                 "network.wifi.forget",
                 "Forget Wi-Fi profile",
-                "Remove the saved Wi-Fi profile and reboot into provisioning",
+                "Remove the saved Wi-Fi profile and reboot into local-only mode",
                 "network.control",
                 {},
             },
@@ -423,7 +423,7 @@ extern "C" void app_main(void) {
         {"Network", "wifi"},
         {
             {"transport", "esp32c6-sdio"},
-            {"provisioning", "auto"},
+            {"configuration", "local-settings"},
             {"hostname", "deos"},
         },
         {{"System", "device"}}

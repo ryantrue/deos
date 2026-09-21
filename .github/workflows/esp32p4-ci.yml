@@ -45,6 +45,15 @@ jobs:
           grep -qx 'CONFIG_LV_OS_FREERTOS=y' "$config"
           grep -qx 'CONFIG_LV_DRAW_THREAD_PRIO=2' "$config"
 
+      - name: Verify local-only configuration policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          firmware="firmware/esp32p4/main"
+          ! grep -R -E 'WIFI_MODE_AP|WIFI_IF_AP|create_default_wifi_ap|DEOS-SETUP' "$firmware"
+          ! grep -R -F 'uri = "/setup"' "$firmware"
+          grep -Fq 'impl_->go_home();' "$firmware/ui_shell.cpp"
+
       - name: Collect flash package
         shell: bash
         env:

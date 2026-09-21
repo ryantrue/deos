@@ -2,8 +2,6 @@
 
 #include "network_controller.hpp"
 
-#include "device_preferences.hpp"
-
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_check.h"
@@ -24,7 +22,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -42,7 +39,6 @@ constexpr char kSsidKey[] = "wifi_ssid";
 constexpr char kPassKey[] = "wifi_pass";
 constexpr char kTokenKey[] = "api_token";
 constexpr int kMaxRetries = 20;
-constexpr size_t kMaxSetupBody = 768;
 
 bool valid_wifi_credentials(std::string_view ssid, std::string_view password) {
     if (ssid.empty() || ssid.size() > 32 || password.size() > 63) {
@@ -93,58 +89,6 @@ std::string hex_token() {
         std::snprintf(out + (i * 2), 3, "%02x", bytes[i]);
     }
     return out;
-}
-
-int from_hex(char c) {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    }
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (c >= 'a' && c <= 'f') {
-        return 10 + c - 'a';
-    }
-    return -1;
-}
-
-std::string url_decode(std::string_view value) {
-    std::string result;
-    result.reserve(value.size());
-
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (value[i] == '+') {
-            result.push_back(' ');
-        } else if (value[i] == '%' && i + 2 < value.size()) {
-            const int hi = from_hex(value[i + 1]);
-            const int lo = from_hex(value[i + 2]);
-            if (hi >= 0 && lo >= 0) {
-                result.push_back(static_cast<char>((hi << 4) | lo));
-                i += 2;
-            } else {
-                result.push_back(value[i]);
-            }
-        } else {
-            result.push_back(value[i]);
-        }
-    }
-    return result;
-}
-
-std::string form_value(std::string_view body, std::string_view key) {
-    const std::string prefix = std::string(key) + "=";
-    size_t start = 0;
-    while (start < body.size()) {
-        const size_t end = body.find('&', start);
-        const size_t len = (end == std::string_view::npos ? body.size() : end) - start;
-        const std::string_view item = body.substr(start, len);
-        if (item.substr(0, prefix.size()) == prefix) {
-            return url_decode(item.substr(prefix.size()));
-        }
-        if (end == std::string_view::npos) {
-            break;
-        }
-        start = end + 1;
-    }
-    return {};
 }
 
 cJSON* state_value_to_json(const StateValue& value) {
@@ -217,7 +161,6 @@ struct NetworkController::Impl {
     NetworkController* owner{nullptr};
     EntityRegistry& entities;
     ActionRegistry& actions;
-    DevicePreferences& preferences;
     mutable SemaphoreHandle_t state_mutex{nullptr};
     mutable SemaphoreHandle_t scan_mutex{nullptr};
     httpd_handle_t server{nullptr};
@@ -240,10 +183,9 @@ struct NetworkController::Impl {
 
     Impl(EntityRegistry& entity_registry,
          ActionRegistry& action_registry,
-         DevicePreferences& device_preferences)
+         DevicePreferences&)
         : entities(entity_registry),
-          actions(action_registry),
-          preferences(device_preferences) {
+          actions(action_registry) {
         state_mutex = xSemaphoreCreateMutex();
         scan_mutex = xSemaphoreCreateMutex();
     }
@@ -338,12 +280,12 @@ struct NetworkController::Impl {
             (void)self->entities.set("network.connected", false);
             (void)self->entities.set("network.ip", std::string(""));
             const NetworkSnapshot state = self->snapshot_state();
-            if (!state.provisioning && self->retry_count < kMaxRetries) {
+            if (!state.ssid.empty() && self->retry_count < kMaxRetries) {
                 ++self->retry_count;
                 ESP_LOGW(kTag, "Wi-Fi disconnected, retry %d/%d",
                          self->retry_count, kMaxRetries);
                 (void)esp_wifi_connect();
-            } else if (!state.provisioning) {
+            } else if (!state.ssid.empty()) {
                 ESP_LOGE(kTag, "Wi-Fi connection retries exhausted");
             }
             return;
@@ -588,51 +530,6 @@ struct NetworkController::Impl {
         return err;
     }
 
-    void derive_setup_credentials() {
-        uint8_t mac[6]{};
-        const esp_err_t mac_err = esp_wifi_get_mac(WIFI_IF_STA, mac);
-
-        const std::string current_token = token_copy();
-        char suffix[5]{};
-        if (mac_err == ESP_OK) {
-            std::snprintf(suffix, sizeof(suffix), "%02X%02X", mac[4], mac[5]);
-        } else if (current_token.size() >= 4) {
-            const size_t start = current_token.size() - 4;
-            for (size_t i = 0; i < 4; ++i) {
-                suffix[i] = static_cast<char>(
-                    std::toupper(static_cast<unsigned char>(current_token[start + i])));
-            }
-            ESP_LOGW(
-                kTag,
-                "remote Wi-Fi MAC unavailable (%s); using persisted device identity",
-                esp_err_to_name(mac_err));
-        } else {
-            const uint32_t fallback = esp_random();
-            std::snprintf(suffix, sizeof(suffix), "%04X",
-                          static_cast<unsigned>(fallback & 0xffffU));
-            ESP_LOGW(
-                kTag,
-                "remote Wi-Fi MAC and persisted identity unavailable; using runtime suffix");
-        }
-
-        char ssid[32]{};
-        std::snprintf(
-            ssid,
-            sizeof(ssid),
-            "DEOS-SETUP-%s",
-            suffix);
-
-        std::string password =
-            current_token.size() >= 12
-                ? "deos-" + current_token.substr(0, 8)
-                : "deos-setup";
-
-        lock_state();
-        setup_ssid = ssid;
-        setup_password = std::move(password);
-        unlock_state();
-    }
-
     bool authorized(httpd_req_t* req) const {
         const std::string expected = token_copy();
         if (expected.empty()) {
@@ -651,76 +548,6 @@ struct NetworkController::Impl {
         }
         supplied.resize(std::strlen(supplied.c_str()));
         return supplied == expected;
-    }
-
-    static esp_err_t setup_page(httpd_req_t* req) {
-        static constexpr char kHtml[] =
-            "<!doctype html><html><head><meta name='viewport' content='width=device-width'>"
-            "<title>DEOS Setup</title><style>"
-            "body{font-family:system-ui;background:#0b0e12;color:#eef2f6;max-width:520px;margin:40px auto;padding:20px}"
-            "input,button{box-sizing:border-box;width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #343b46}"
-            "input{background:#151a21;color:white}button{background:#2b78ff;color:white;font-weight:700}"
-            "</style></head><body><h1>DEOS network setup</h1>"
-            "<p>Connect this device to your Wi-Fi. Credentials are stored only in device NVS.</p>"
-            "<form method='post' action='/setup'>"
-            "<input name='ssid' placeholder='Wi-Fi SSID' maxlength='32' required>"
-            "<input name='password' type='password' placeholder='Wi-Fi password' maxlength='63'>"
-            "<button type='submit'>Save and reboot</button></form></body></html>";
-
-        httpd_resp_set_type(req, "text/html");
-        return httpd_resp_send(req, kHtml, HTTPD_RESP_USE_STRLEN);
-    }
-
-    static esp_err_t setup_submit(httpd_req_t* req) {
-        auto* self = static_cast<Impl*>(req->user_ctx);
-        if (self == nullptr || req->content_len == 0 || req->content_len > kMaxSetupBody) {
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid request");
-        }
-
-        std::string body(req->content_len, '\0');
-        size_t received = 0;
-        while (received < body.size()) {
-            const int n = httpd_req_recv(
-                req, body.data() + received, body.size() - received);
-            if (n == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
-            }
-            if (n <= 0) {
-                return ESP_FAIL;
-            }
-            received += static_cast<size_t>(n);
-        }
-
-        const std::string ssid = form_value(body, "ssid");
-        const std::string password = form_value(body, "password");
-        if (!valid_wifi_credentials(ssid, password)) {
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid SSID or password");
-        }
-
-        const esp_err_t err = self->save_wifi(ssid, password);
-        if (err != ESP_OK) {
-            ESP_LOGE(kTag, "saving Wi-Fi profile failed: %s", esp_err_to_name(err));
-            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "failed to save profile");
-        }
-
-        if (!self->preferences.setup_completed()) {
-            if (!self->preferences.set_setup_step(SetupStep::Storage)) {
-                ESP_LOGE(kTag, "failed to persist onboarding resume step");
-                return httpd_resp_send_err(
-                    req,
-                    HTTPD_500_INTERNAL_SERVER_ERROR,
-                    "failed to save onboarding state");
-            }
-        }
-
-        static constexpr char kSaved[] =
-            "<html><body style='font-family:system-ui;background:#0b0e12;color:#fff'>"
-            "<h2>Saved</h2><p>DEOS is rebooting and will connect to your network.</p>"
-            "</body></html>";
-        httpd_resp_set_type(req, "text/html");
-        const esp_err_t response = httpd_resp_send(req, kSaved, HTTPD_RESP_USE_STRLEN);
-        xTaskCreate(restart_task, "deos-restart", 2048, nullptr, 5, nullptr);
-        return response;
     }
 
     static esp_err_t status_api(httpd_req_t* req) {
@@ -752,7 +579,7 @@ struct NetworkController::Impl {
         cJSON_AddStringToObject(
             network,
             "mode",
-            state.provisioning ? "setup-ap" : "station");
+            state.ssid.empty() ? "unconfigured" : "station");
         cJSON_AddBoolToObject(network, "connected", state.connected);
         cJSON_AddStringToObject(network, "ip", state.ip.c_str());
 
@@ -969,11 +796,6 @@ struct NetworkController::Impl {
     }
 
     static esp_err_t root_page(httpd_req_t* req) {
-        auto* self = static_cast<Impl*>(req->user_ctx);
-        if (self != nullptr && self->snapshot_state().provisioning) {
-            return setup_page(req);
-        }
-
         static constexpr char kHtml[] =
             "<!doctype html><html><head><meta name='viewport' content='width=device-width'>"
             "<title>DEOS</title></head><body style='font-family:system-ui;background:#0b0e12;color:#fff'>"
@@ -999,20 +821,6 @@ struct NetworkController::Impl {
         root.handler = root_page;
         root.user_ctx = this;
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), kTag, "register root failed");
-
-        httpd_uri_t setup_get{};
-        setup_get.uri = "/setup";
-        setup_get.method = HTTP_GET;
-        setup_get.handler = setup_page;
-        setup_get.user_ctx = this;
-        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &setup_get), kTag, "register setup GET failed");
-
-        httpd_uri_t setup_post{};
-        setup_post.uri = "/setup";
-        setup_post.method = HTTP_POST;
-        setup_post.handler = setup_submit;
-        setup_post.user_ctx = this;
-        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &setup_post), kTag, "register setup POST failed");
 
         httpd_uri_t status{};
         status.uri = "/api/v1/status";
@@ -1072,49 +880,6 @@ struct NetworkController::Impl {
         return ESP_OK;
     }
 
-    esp_err_t start_setup_ap() {
-        derive_setup_credentials();
-
-        lock_state();
-        is_provisioning = true;
-        const std::string ap_ssid = setup_ssid;
-        const std::string ap_password = setup_password;
-        unlock_state();
-
-        netif = esp_netif_create_default_wifi_ap();
-        if (netif == nullptr) {
-            return ESP_ERR_NO_MEM;
-        }
-
-        wifi_config_t config{};
-        std::snprintf(reinterpret_cast<char*>(config.ap.ssid),
-                      sizeof(config.ap.ssid), "%s", ap_ssid.c_str());
-        std::snprintf(reinterpret_cast<char*>(config.ap.password),
-                      sizeof(config.ap.password), "%s", ap_password.c_str());
-        config.ap.ssid_len = static_cast<uint8_t>(ap_ssid.size());
-        config.ap.channel = 1;
-        config.ap.max_connection = 4;
-        config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-
-        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), kTag, "set AP+STA mode failed");
-        ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &config), kTag, "set AP config failed");
-        ESP_RETURN_ON_ERROR(esp_wifi_start(), kTag, "start setup AP failed");
-
-        lock_state();
-        ip_address = "192.168.4.1";
-        is_connected = false;
-        unlock_state();
-        (void)entities.set("network.connected", false);
-        (void)entities.set("network.ip", std::string("192.168.4.1"));
-        (void)entities.set("network.mode", std::string("setup-ap"));
-        (void)entities.set("network.ssid", ap_ssid);
-        ESP_LOGW(kTag, "No Wi-Fi profile found");
-        ESP_LOGW(kTag, "Setup AP: %s", ap_ssid.c_str());
-        ESP_LOGW(kTag, "Setup password: %s", ap_password.c_str());
-        ESP_LOGW(kTag, "Open http://192.168.4.1/ after connecting");
-        return ESP_OK;
-    }
-
     esp_err_t start_station() {
         lock_state();
         is_provisioning = false;
@@ -1125,7 +890,9 @@ struct NetworkController::Impl {
         unlock_state();
         (void)entities.set("network.connected", false);
         (void)entities.set("network.ip", std::string(""));
-        (void)entities.set("network.mode", std::string("station"));
+        (void)entities.set(
+            "network.mode",
+            station_ssid.empty() ? std::string("unconfigured") : std::string("station"));
         (void)entities.set("network.ssid", station_ssid);
 
         netif = esp_netif_create_default_wifi_sta();
@@ -1144,18 +911,26 @@ struct NetworkController::Impl {
             kTag,
             "register IP event handler failed");
 
-        wifi_config_t config{};
-        std::snprintf(reinterpret_cast<char*>(config.sta.ssid),
-                      sizeof(config.sta.ssid), "%s", station_ssid.c_str());
-        std::snprintf(reinterpret_cast<char*>(config.sta.password),
-                      sizeof(config.sta.password), "%s", station_password.c_str());
-        config.sta.threshold.authmode = WIFI_AUTH_OPEN;
-
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), kTag, "set STA mode failed");
-        ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &config), kTag, "set STA config failed");
+        if (!station_ssid.empty()) {
+            wifi_config_t config{};
+            std::snprintf(reinterpret_cast<char*>(config.sta.ssid),
+                          sizeof(config.sta.ssid), "%s", station_ssid.c_str());
+            std::snprintf(reinterpret_cast<char*>(config.sta.password),
+                          sizeof(config.sta.password), "%s", station_password.c_str());
+            config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+            ESP_RETURN_ON_ERROR(
+                esp_wifi_set_config(WIFI_IF_STA, &config),
+                kTag,
+                "set STA config failed");
+        }
         ESP_RETURN_ON_ERROR(esp_wifi_start(), kTag, "start station failed");
 
-        ESP_LOGI(kTag, "Station profile loaded: %s", station_ssid.c_str());
+        if (station_ssid.empty()) {
+            ESP_LOGI(kTag, "No Wi-Fi profile; configure it locally in Settings > Network");
+        } else {
+            ESP_LOGI(kTag, "Station profile loaded: %s", station_ssid.c_str());
+        }
         return ESP_OK;
     }
 
@@ -1190,17 +965,7 @@ struct NetworkController::Impl {
         ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_init), kTag, "Wi-Fi init failed");
         (void)esp_wifi_set_storage(WIFI_STORAGE_RAM);
 
-        if (snapshot_state().ssid.empty()) {
-            ESP_RETURN_ON_ERROR(
-                start_setup_ap(),
-                kTag,
-                "setup AP failed");
-        } else {
-            ESP_RETURN_ON_ERROR(
-                start_station(),
-                kTag,
-                "station start failed");
-        }
+        ESP_RETURN_ON_ERROR(start_station(), kTag, "station start failed");
 
         ESP_RETURN_ON_ERROR(start_http_server(), kTag, "control HTTP server failed");
         ESP_RETURN_ON_ERROR(start_mdns(), kTag, "mDNS start failed");
@@ -1209,9 +974,10 @@ struct NetworkController::Impl {
         initialized = true;
         unlock_state();
 
-        const std::string log_token = token_copy();
-        ESP_LOGI(kTag, "DEOS API token: %s", log_token.c_str());
-        ESP_LOGI(kTag, "Control plane: http://deos.local/");
+        ESP_LOGI(kTag, "DEOS API token initialized (visible in Developer settings)");
+        if (!snapshot_state().ssid.empty()) {
+            ESP_LOGI(kTag, "Control plane: http://deos.local/");
+        }
         return ESP_OK;
     }
 };
@@ -1244,10 +1010,10 @@ ResourceStatus NetworkController::reconcile(const Resource&,
     const NetworkSnapshot state = impl_->snapshot_state();
     return {
         Phase::Ready,
-        state.provisioning ? "Wi-Fi setup AP ready" : "Wi-Fi station active",
+        state.ssid.empty() ? "Wi-Fi ready for local configuration" : "Wi-Fi station active",
         {
             {"transport", "esp32c6-sdio"},
-            {"mode", state.provisioning ? "setup-ap" : "station"},
+            {"mode", state.ssid.empty() ? "unconfigured" : "station"},
             {"ssid", state.ssid},
             {"ip", state.ip},
             {"control", "http://deos.local/"},
@@ -1330,7 +1096,7 @@ bool NetworkController::configure_wifi_and_reboot(
 
 bool NetworkController::forget_wifi_and_reboot() {
     const NetworkSnapshot state = impl_->snapshot_state();
-    if (!state.initialized || state.provisioning) {
+    if (!state.initialized || state.ssid.empty()) {
         return false;
     }
 
@@ -1340,7 +1106,7 @@ bool NetworkController::forget_wifi_and_reboot() {
         return false;
     }
 
-    ESP_LOGW(kTag, "Wi-Fi profile removed; rebooting into provisioning");
+    ESP_LOGW(kTag, "Wi-Fi profile removed; rebooting into local-only mode");
     return xTaskCreate(restart_task, "deos-net-reset", 2048, nullptr, 5, nullptr) == pdPASS;
 }
 

@@ -222,13 +222,11 @@ struct ShellUi::Impl {
 
         const platform::NetworkSnapshot net = network.snapshot();
         const char* status_text =
-            net.provisioning ? "SETUP" : (net.connected ? "WIFI" : "LOCAL");
+            net.connected ? "WIFI" : "LOCAL";
         const lv_color_t status_bg =
-            net.provisioning ? color(0x302A14)
-                             : (net.connected ? color(0x14241C) : color(0x18202A));
+            net.connected ? color(0x14241C) : color(0x18202A);
         const lv_color_t status_fg =
-            net.provisioning ? color(0xE8CE73)
-                             : (net.connected ? color(0x69D39A) : color(0x8DA3B8));
+            net.connected ? color(0x69D39A) : color(0x8DA3B8);
 
         lv_obj_t* local = lv_button_create(screen);
         lv_obj_set_pos(local, 582, 18);
@@ -733,8 +731,8 @@ struct ShellUi::Impl {
         lv_label_set_text(home_control_value_label, model_count.c_str());
 
         std::string connectivity =
-            network_mode == "setup-ap"
-                ? "Wi-Fi setup"
+            network_mode == "unconfigured"
+                ? "Wi-Fi not configured"
                 : (network_mode == "station"
                        ? (network_ip.empty() ? "Wi-Fi connecting" : network_ip)
                        : "Offline");
@@ -1037,7 +1035,7 @@ struct ShellUi::Impl {
 
         lv_obj_t* network_button = make_tile(
             screen, 24, 330, 216, "Network",
-            net.provisioning ? "Setup required"
+            net.ssid.empty() ? "Not configured"
                              : (net.connected ? "Connected" : "Offline"),
             color(0x151C24), color(0x2A3D52));
         lv_obj_add_event_cb(network_button, on_network, LV_EVENT_CLICKED, this);
@@ -1131,8 +1129,8 @@ struct ShellUi::Impl {
         set_panel_style(card, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(card, 26, 0);
 
-        const char* state_text = net.provisioning
-                                     ? "SETUP"
+        const char* state_text = net.ssid.empty()
+                                     ? "NOT CONFIGURED"
                                      : (net.connected ? "CONNECTED" : "CONNECTING");
         lv_obj_t* state = make_label(
             card,
@@ -1150,32 +1148,26 @@ struct ShellUi::Impl {
             return;
         }
 
-        if (net.provisioning) {
+        if (net.ssid.empty()) {
             lv_obj_t* title = make_label(
                 card,
-                "Connect a phone or computer to this setup network:",
-                color(0x9AA5B2));
+                "Wi-Fi is configured only on this display.",
+                color(0xF4F7FA),
+                &lv_font_montserrat_28);
             lv_obj_set_pos(title, 0, 62);
-
-            lv_obj_t* ssid = make_label(
-                card, net.setup_ssid.c_str(), color(0xF4F7FA), &lv_font_montserrat_28);
-            lv_obj_set_pos(ssid, 0, 104);
-
-            const std::string password = "Password: " + net.setup_password;
-            lv_obj_t* pass = make_label(card, password.c_str(), color(0xC8D1DB));
-            lv_obj_set_pos(pass, 0, 150);
 
             lv_obj_t* step = make_label(
                 card,
-                "Then open http://192.168.4.1/ and choose the Wi-Fi network\n"
-                "DEOS should use. Credentials are stored only on this device.",
+                "DEOS will not create a setup access point. Tap the button below, "
+                "choose a nearby network and enter its password. Credentials remain "
+                "in device NVS.",
                 color(0x7E8996));
             lv_label_set_long_mode(step, LV_LABEL_LONG_WRAP);
             lv_obj_set_width(step, 610);
-            lv_obj_set_pos(step, 0, 205);
+            lv_obj_set_pos(step, 0, 132);
 
             lv_obj_t* choose = make_action(
-                screen, "Choose Wi-Fi on this device", color(0x245BA5), color(0xFFFFFF), 672);
+                screen, "Choose Wi-Fi", color(0x245BA5), color(0xFFFFFF), 672);
             lv_obj_set_pos(choose, 24, 576);
             lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
         } else {
@@ -1188,7 +1180,7 @@ struct ShellUi::Impl {
             lv_obj_set_style_pad_row(details, 2, 0);
             lv_obj_set_flex_flow(details, LV_FLEX_FLOW_COLUMN);
 
-            add_info_row(details, "Wi-Fi", net.ssid.empty() ? "configured" : net.ssid);
+            add_info_row(details, "Wi-Fi", net.ssid);
             add_info_row(details, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
             add_info_row(details, "Local name", "deos.local");
             add_info_row(details, "Control API", "port 80 / token auth");
@@ -1375,7 +1367,7 @@ struct ShellUi::Impl {
         lv_obj_t* detail = make_label(
             card,
             "The device API token is kept. After reboot DEOS will return to\n"
-            "its setup access point so Wi-Fi can be configured again.",
+            "local-only mode. Configure Wi-Fi again in Settings > Network.",
             color(0xC6B9BC));
         lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(detail, 610);
@@ -1475,8 +1467,8 @@ struct ShellUi::Impl {
         add_info_row(card, "PSRAM free",
                      bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, psram_free))));
         add_info_row(card, "Network",
-                     net.provisioning
-                         ? "setup-ap"
+                     net.ssid.empty()
+                         ? "not configured"
                          : (net.connected ? "connected" : "offline/connecting"));
         add_info_row(card, "IP", net.ip.empty() ? "-" : net.ip);
         add_info_row(card, "SD", platform::to_string(sd.state));
@@ -2186,25 +2178,13 @@ ShellUi::ShellUi(lv_display_t* display,
 ShellUi::~ShellUi() = default;
 
 void ShellUi::create() {
-    if (impl_->preferences.setup_completed()) {
-        impl_->go_home();
-        return;
+    // There is no separate onboarding shell. Device configuration lives in
+    // the normal Settings screens, so every boot lands in Home.
+    if (!impl_->preferences.setup_completed() &&
+        !impl_->preferences.set_setup_completed(true)) {
+        ESP_LOGW("deos-ui", "could not retire legacy first-run state");
     }
-
-    switch (impl_->preferences.setup_step()) {
-        case platform::SetupStep::Welcome:
-            impl_->render_screen(Impl::ScreenId::FirstRunWelcome);
-            break;
-        case platform::SetupStep::Network:
-            impl_->render_screen(Impl::ScreenId::FirstRunNetwork);
-            break;
-        case platform::SetupStep::Storage:
-            impl_->render_screen(Impl::ScreenId::FirstRunStorage);
-            break;
-        case platform::SetupStep::Ready:
-            impl_->render_screen(Impl::ScreenId::FirstRunReady);
-            break;
-    }
+    impl_->go_home();
 }
 
 }  // namespace deos::ui

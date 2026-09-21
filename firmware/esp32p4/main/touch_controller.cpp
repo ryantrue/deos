@@ -34,6 +34,8 @@ struct TouchController::Impl {
     lv_indev_t* indev{nullptr};
     uint8_t address{0};
     bool initialized{false};
+    bool was_pressed{false};
+    uint32_t read_errors{0};
 
     static void read(lv_indev_t* indev_handle, lv_indev_data_t* data) {
         auto* self = static_cast<Impl*>(lv_indev_get_user_data(indev_handle));
@@ -42,7 +44,20 @@ struct TouchController::Impl {
             return;
         }
 
-        if (esp_lcd_touch_read_data(self->touch) != ESP_OK) {
+        const esp_err_t read_err = esp_lcd_touch_read_data(self->touch);
+        if (read_err != ESP_OK) {
+            ++self->read_errors;
+            if (self->read_errors == 1 || self->read_errors % 100 == 0) {
+                ESP_LOGW(
+                    kTag,
+                    "GT911 poll failed: %s (count=%lu)",
+                    esp_err_to_name(read_err),
+                    static_cast<unsigned long>(self->read_errors));
+            }
+            if (self->was_pressed) {
+                ESP_LOGI(kTag, "GT911 release after read error");
+                self->was_pressed = false;
+            }
             data->state = LV_INDEV_STATE_RELEASED;
             return;
         }
@@ -53,8 +68,21 @@ struct TouchController::Impl {
             data->point.x = static_cast<int32_t>(point.x);
             data->point.y = static_cast<int32_t>(point.y);
             data->state = LV_INDEV_STATE_PRESSED;
+            if (!self->was_pressed) {
+                ESP_LOGI(
+                    kTag,
+                    "GT911 press x=%u y=%u points=%u",
+                    static_cast<unsigned>(point.x),
+                    static_cast<unsigned>(point.y),
+                    static_cast<unsigned>(count));
+                self->was_pressed = true;
+            }
         } else {
             data->state = LV_INDEV_STATE_RELEASED;
+            if (self->was_pressed) {
+                ESP_LOGI(kTag, "GT911 release");
+                self->was_pressed = false;
+            }
         }
     }
 
