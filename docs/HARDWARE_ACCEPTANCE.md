@@ -92,6 +92,8 @@ Pass when:
 Pass when:
 
 - ESP32-C6 transport initializes over 4-bit SDIO;
+- ESP-Hosted creates its SDIO mempool in PSRAM without an early-boot assert;
+- logs do not warn that `CONFIG_FREERTOS_HZ` is below the recommended 1000 Hz;
 - nearby Wi-Fi networks can be scanned from the touchscreen without freezing LVGL;
 - SSID selection opens the system keyboard;
 - credentials are stored only in device NVS;

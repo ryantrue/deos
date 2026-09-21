@@ -44,7 +44,13 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
 CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
+# The SDIO transport pool needs roughly 47 KiB. Keep scarce internal DMA RAM
+# available for the display and allocate the ESP-Hosted pool from P4 PSRAM.
+CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y
 CONFIG_ESP_WIFI_REMOTE_ENABLED=y
+
+# ESP-Hosted recommends a 1 kHz FreeRTOS tick to avoid SDIO bus jitter.
+CONFIG_FREERTOS_HZ=1000
 
 # Keep serial logs on the CH343P UART used by this Waveshare board.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
