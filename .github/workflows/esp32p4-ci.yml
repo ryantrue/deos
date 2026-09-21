@@ -72,9 +72,9 @@ jobs:
           widgets="$firmware/ui_widgets.cpp"
           home="$firmware/ui_home_screen.cpp"
 
-          grep -Fq 'dpi.num_fbs = 2;' "$display"
+          grep -Fq 'dpi.num_fbs = 3;' "$display"
           grep -Fq 'heap_caps_aligned_calloc' "$display"
-          grep -Fq 'MALLOC_CAP_SPIRAM' "$display"
+          grep -Fq 'MALLOC_CAP_INTERNAL' "$display"
           grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
           ! grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
           ! grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
