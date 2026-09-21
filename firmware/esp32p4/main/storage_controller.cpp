@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -161,6 +162,19 @@ struct StorageController::Impl {
         status.free_bytes = free;
         status.card_name = card_display_name(card);
         unlock();
+
+        const auto safe_total = static_cast<std::int64_t>(
+            std::min<std::uint64_t>(
+                total,
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int64_t>::max())));
+        const auto safe_free = static_cast<std::int64_t>(
+            std::min<std::uint64_t>(
+                free,
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int64_t>::max())));
+        (void)entities.set("storage.sd.total_bytes", safe_total);
+        (void)entities.set("storage.sd.free_bytes", safe_free);
     }
 
     sdmmc_host_t host_config() const {
