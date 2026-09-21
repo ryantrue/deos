@@ -14,6 +14,7 @@ constexpr char kTag[] = "deos-prefs";
 constexpr char kNamespace[] = "deos_prefs";
 constexpr char kBrightness[] = "brightness";
 constexpr char kSetupCompleted[] = "setup_done";
+constexpr char kSetupStep[] = "setup_step";
 constexpr char kDeveloperMode[] = "dev_mode";
 }
 
@@ -136,7 +137,61 @@ bool DevicePreferences::set_setup_completed(bool completed) {
         return false;
     }
 
+    if (completed) {
+        (void)set_setup_step(SetupStep::Ready);
+    }
+
     ESP_LOGI(kTag, "first-run setup: %s", completed ? "complete" : "pending");
+    return true;
+}
+
+SetupStep DevicePreferences::setup_step() const {
+    if (!initialized_) {
+        return SetupStep::Welcome;
+    }
+
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) {
+        return SetupStep::Welcome;
+    }
+
+    uint8_t value = static_cast<uint8_t>(SetupStep::Welcome);
+    const esp_err_t err = nvs_get_u8(handle, kSetupStep, &value);
+    nvs_close(handle);
+
+    if (err != ESP_OK || value > static_cast<uint8_t>(SetupStep::Ready)) {
+        return SetupStep::Welcome;
+    }
+    return static_cast<SetupStep>(value);
+}
+
+bool DevicePreferences::set_setup_step(SetupStep step) {
+    if (!initialized_) {
+        return false;
+    }
+
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+        return false;
+    }
+
+    esp_err_t err = nvs_set_u8(
+        handle,
+        kSetupStep,
+        static_cast<uint8_t>(step));
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "setup step persistence failed: %s",
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(kTag, "first-run setup step: %u",
+             static_cast<unsigned>(step));
     return true;
 }
 
