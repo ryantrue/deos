@@ -129,6 +129,22 @@ Rules:
 
 The SD formatting flow follows these rules.
 
+## Motion and feedback
+
+DEOS uses motion to preserve spatial continuity, not as decoration.
+
+Current shell rules:
+
+- system surface changes use a short ~120 ms fade;
+- pressed states remain immediate and are not delayed by animation;
+- successful/failed local Actions may show a transient system toast;
+- toasts report the actual Action result rather than assuming success;
+- long-running operations still expose durable Busy state on the owning screen;
+- navigation always cancels transient toast timers before destroying the old object tree;
+- no default full-screen blur, spring physics or long slide transitions on the ESP32-P4 reference target.
+
+The performance rule remains stronger than the visual rule: if an animation measurably harms input latency or frame time, it is removed from the default shell.
+
 ## Performance goals
 
 These are targets, not yet hardware-certified guarantees:
