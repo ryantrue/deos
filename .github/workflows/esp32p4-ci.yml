@@ -160,7 +160,7 @@ jobs:
           retention-days: 30
 
       - name: Publish temporary dev OTA channel
-        if: github.event_name == 'push' && github.ref == 'refs/heads/refactor/p4-ui-foundation'
+        if: github.event_name == 'push' && github.ref_name == 'refactor/p4-ui-foundation'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
