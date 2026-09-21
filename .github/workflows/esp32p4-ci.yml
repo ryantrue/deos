@@ -41,6 +41,8 @@ jobs:
           config="firmware/esp32p4/sdkconfig"
           grep -qx 'CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y' "$config"
           grep -qx 'CONFIG_FREERTOS_HZ=1000' "$config"
+          grep -qx 'CONFIG_COMPILER_OPTIMIZATION_PERF=y' "$config"
+          grep -qx 'CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y' "$config"
 
       - name: Collect flash package
         shell: bash
@@ -87,6 +89,8 @@ jobs:
 
           cp "firmware/esp32p4/partitions.csv" "$package/partitions.csv"
           cp "firmware/esp32p4/sdkconfig" "$package/sdkconfig"
+          cp "$build/deos_esp32p4.elf" "$package/deos_esp32p4.elf"
+          cp "$build/deos_esp32p4.map" "$package/deos_esp32p4.map"
 
           {
             echo "DEOS ESP32-P4 CI flash package"
@@ -94,6 +98,7 @@ jobs:
             echo "tested_commit=$GITHUB_SHA"
             echo "idf=6.1"
             echo "target=esp32p4"
+            echo "optimization=performance"
             echo
             echo "First migration to the A/B layout:"
             echo 'python -m esptool --chip esp32p4 -p "$PORT" erase-flash'

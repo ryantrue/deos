@@ -47,6 +47,7 @@ Pass when:
 - Home clears navigation history;
 - Quick Settings returns to its caller rather than always forcing Home;
 - repeated navigation for several minutes does not crash or progressively lose internal RAM;
+- CPU1 idle is serviced continuously; `deos_lvgl` does not trigger the task watchdog;
 - visible pressed state begins immediately.
 
 Check at least:
