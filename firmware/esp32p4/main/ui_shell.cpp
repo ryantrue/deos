@@ -2,6 +2,7 @@
 
 #include "ui_shell.hpp"
 #include "ui_navigation.hpp"
+#include "ui_home_screen.hpp"
 #include "ui_theme.hpp"
 #include "ui_widgets.hpp"
 
@@ -71,10 +72,7 @@ struct ShellUi::Impl {
     lv_obj_t* wifi_scan_body{nullptr};
     lv_obj_t* wifi_password_area{nullptr};
     lv_obj_t* brightness_value_label{nullptr};
-    lv_obj_t* home_system_value_label{nullptr};
-    lv_obj_t* home_storage_value_label{nullptr};
-    lv_obj_t* home_control_value_label{nullptr};
-    lv_obj_t* home_settings_value_label{nullptr};
+    HomeView home_view{};
     std::string storage_render_key;
     std::string home_render_key;
     std::string wifi_scan_render_key;
@@ -130,10 +128,7 @@ struct ShellUi::Impl {
         wifi_scan_body = nullptr;
         wifi_password_area = nullptr;
         brightness_value_label = nullptr;
-        home_system_value_label = nullptr;
-        home_storage_value_label = nullptr;
-        home_control_value_label = nullptr;
-        home_settings_value_label = nullptr;
+        home_view = {};
 
         storage_render_key.clear();
         home_render_key.clear();
@@ -541,164 +536,61 @@ struct ShellUi::Impl {
         return fallback;
     }
 
-    void refresh_home_live() {
-        if (home_system_value_label == nullptr ||
-            home_storage_value_label == nullptr ||
-            home_control_value_label == nullptr ||
-            home_settings_value_label == nullptr) {
-            return;
-        }
+    HomeState home_state() const {
+        HomeState state{};
+        state.ready = entity_bool("system.ready", false);
+        state.storage_state = entity_text("storage.sd.state", "unknown");
 
-        const bool ready = entity_bool("system.ready", false);
-        const std::string storage_state =
-            entity_text("storage.sd.state", "unknown");
-        const std::string network_mode =
-            entity_text("network.mode", "offline");
-        const std::string network_ip =
-            entity_text("network.ip", "");
-        const std::string brightness =
-            entity_text("display.brightness", "72");
+        const std::string network_mode = entity_text("network.mode", "offline");
+        const std::string network_ip = entity_text("network.ip", "");
+        const std::string brightness = entity_text("display.brightness", "72");
 
-        const std::string render_key =
-            std::string(ready ? "1" : "0") + "|" +
-            storage_state + "|" + network_mode + "|" + network_ip + "|" +
-            brightness + "|" + std::to_string(entities.size()) + "|" +
-            std::to_string(actions.size());
-
-        if (render_key == home_render_key) {
-            return;
-        }
-        home_render_key = render_key;
-
-        lv_label_set_text(home_system_value_label, ready ? "READY" : "STARTING");
-        lv_obj_set_style_text_color(
-            home_system_value_label,
-            ready ? color(0x71D99C) : color(0xE1C777),
-            0);
-
-        lv_label_set_text(home_storage_value_label, storage_state.c_str());
-        lv_obj_set_style_text_color(
-            home_storage_value_label,
-            storage_state == "ready" ? color(0xD8D68A) : color(0xA8A570),
-            0);
-
-        const std::string model_count =
+        state.model_count =
             std::to_string(entities.size()) + " states / " +
             std::to_string(actions.size()) + " actions";
-        lv_label_set_text(home_control_value_label, model_count.c_str());
-
-        std::string connectivity =
+        state.connectivity =
             network_mode == "unconfigured"
                 ? "Wi-Fi not configured"
                 : (network_mode == "station"
                        ? (network_ip.empty() ? "Wi-Fi connecting" : network_ip)
                        : "Offline");
-        connectivity += " / " + brightness + "% brightness";
-        lv_label_set_text(home_settings_value_label, connectivity.c_str());
+        state.connectivity += " / " + brightness + "% brightness";
+        return state;
+    }
+
+    std::string home_state_key(const HomeState& state) const {
+        return std::string(state.ready ? "1" : "0") + "|" +
+               state.storage_state + "|" + state.connectivity + "|" +
+               state.model_count;
+    }
+
+    void refresh_home_live() {
+        const HomeState state = home_state();
+        const std::string render_key = home_state_key(state);
+        if (render_key == home_render_key) {
+            return;
+        }
+        home_render_key = render_key;
+        update_home_screen(home_view, state);
     }
 
     void show_home() {
         lv_obj_t* screen = begin_screen("Home", false);
-
-        lv_obj_t* intro = label(
+        const HomeState state = home_state();
+        home_view = build_home_screen(
             screen,
-            "Device status and controls",
-            color(0x75808D));
-        lv_obj_set_pos(intro, kMargin, 72);
-
-        constexpr int col = 216;
-        constexpr int wide = 444;
-
-        lv_obj_t* system = tile(
-            screen, kMargin, 112, 672, "This device", "Local system status",
-            color(0x14243B), color(0x285887));
-        home_system_value_label = label(
-            system, "STARTING", color(0xE1C777), &lv_font_montserrat_20);
-        lv_obj_set_pos(home_system_value_label, 0, 84);
-        lv_obj_add_event_cb(system, on_system, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* settings = tile(
-            screen, kMargin, 270, wide, "Settings", "Network, display and storage",
-            color(0x17251F), color(0x28573F));
-        home_settings_value_label = label(
-            settings, "Loading device state...", color(0x9EE2BB));
-        lv_obj_set_pos(home_settings_value_label, 0, 84);
-        lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
-
-        const auto sd = storage.snapshot();
-        lv_obj_t* files = tile(
-            screen, 480, 270, col, "Storage", "Internal and SD",
-            color(0x202117), color(0x55562A));
-        home_storage_value_label = label(
-            files,
-            platform::to_string(sd.state),
-            sd.state == platform::SdVolumeState::Ready
-                ? color(0xD8D68A)
-                : color(0xA8A570));
-        lv_obj_set_pos(home_storage_value_label, 0, 84);
-        lv_obj_add_event_cb(files, on_storage, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* control = tile(
-            screen, kMargin, 428, col, "Control", "State and actions",
-            color(0x171B21), color(0x2A3039));
-        const std::string model_count =
-            std::to_string(entities.size()) + " states / " +
-            std::to_string(actions.size()) + " actions";
-        home_control_value_label =
-            label(control, model_count.c_str(), color(0xA9B1BA));
-        lv_obj_set_pos(home_control_value_label, 0, 84);
-        lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* apps = tile(
-            screen, 252, 428, col, "Apps", "Device applications",
-            color(0x1D1C1B), color(0x343330));
-        lv_obj_t* app_count = label(apps, "Open app list", color(0xA9B1BA));
-        lv_obj_set_pos(app_count, 0, 84);
-        lv_obj_add_event_cb(apps, on_apps, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* ai = tile(
-            screen, 480, 428, col, "AI", "Optional service",
-            color(0x171B21), color(0x2A3039));
-        lv_obj_t* ai_hint = label(ai, "Not configured", color(0x8C97A4));
-        lv_obj_set_pos(ai_hint, 0, 84);
-        lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
-
-        lv_obj_t* dock = lv_obj_create(screen);
-        lv_obj_set_pos(dock, kMargin, 610);
-        lv_obj_set_size(dock, 672, 82);
-        lv_obj_remove_flag(dock, LV_OBJ_FLAG_SCROLLABLE);
-        theme::apply_panel(dock, color(0x10141A), color(0x242A32));
-        lv_obj_set_style_pad_all(dock, 10, 0);
-
-        const char* dock_labels[] = {"HOME", "CONTROL", "APPS", "SETTINGS"};
-        for (int i = 0; i < 4; ++i) {
-            lv_obj_t* item = lv_button_create(dock);
-            lv_obj_set_pos(item, i * 160, 0);
-            lv_obj_set_size(item, 150, 60);
-            lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(item, 0, 0);
-            lv_obj_set_style_shadow_width(item, 0, 0);
-            lv_obj_t* text = label(
-                item,
-                dock_labels[i],
-                i == 0 ? color(0xF5F7FA) : color(0x697481));
-            lv_obj_center(text);
-            if (i == 0) {
-                lv_obj_add_event_cb(item, on_home, LV_EVENT_CLICKED, this);
-            } else if (i == 1) {
-                lv_obj_add_event_cb(item, on_control, LV_EVENT_CLICKED, this);
-            } else if (i == 2) {
-                lv_obj_add_event_cb(item, on_apps, LV_EVENT_CLICKED, this);
-            } else {
-                lv_obj_add_event_cb(item, on_settings, LV_EVENT_CLICKED, this);
-            }
-        }
-
-        (void)control;
-        (void)apps;
-        (void)ai;
-
-        refresh_home_live();
+            state,
+            HomeCallbacks{
+                .home = on_home,
+                .control = on_control,
+                .apps = on_apps,
+                .settings = on_settings,
+                .system = on_system,
+                .storage = on_storage,
+                .ai = on_ai,
+                .user_data = this,
+            });
+        home_render_key = home_state_key(state);
         home_timer = lv_timer_create(on_home_timer, 750, this);
     }
 
