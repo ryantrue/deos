@@ -21,8 +21,10 @@
 #include <array>
 #include <cstdlib>
 #include <cstdio>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace deos::ui {
 namespace {
@@ -87,6 +89,8 @@ struct ShellUi::Impl {
         Update,
         Developer,
         Network,
+        WifiScan,
+        WifiCredentials,
         ForgetWifiConfirm,
         Storage,
         FormatConfirm,
@@ -103,7 +107,10 @@ struct ShellUi::Impl {
     platform::StorageController& storage;
     lv_timer_t* storage_timer{nullptr};
     lv_timer_t* home_timer{nullptr};
+    lv_timer_t* wifi_scan_timer{nullptr};
     lv_obj_t* storage_body{nullptr};
+    lv_obj_t* wifi_scan_body{nullptr};
+    lv_obj_t* wifi_password_area{nullptr};
     lv_obj_t* brightness_value_label{nullptr};
     lv_obj_t* home_system_value_label{nullptr};
     lv_obj_t* home_storage_value_label{nullptr};
@@ -111,6 +118,11 @@ struct ShellUi::Impl {
     lv_obj_t* home_settings_value_label{nullptr};
     std::string storage_render_key;
     std::string home_render_key;
+    std::string wifi_scan_render_key;
+    std::string wifi_selected_ssid;
+    std::string wifi_join_error;
+    bool wifi_selected_secured{false};
+    std::vector<platform::WifiScanEntry> wifi_scan_entries;
     int developer_taps{0};
     bool developer_mode{false};
     ScreenId current_screen{ScreenId::Home};
@@ -146,7 +158,13 @@ struct ShellUi::Impl {
             lv_timer_delete(home_timer);
             home_timer = nullptr;
         }
+        if (wifi_scan_timer != nullptr) {
+            lv_timer_delete(wifi_scan_timer);
+            wifi_scan_timer = nullptr;
+        }
         storage_body = nullptr;
+        wifi_scan_body = nullptr;
+        wifi_password_area = nullptr;
         brightness_value_label = nullptr;
         home_system_value_label = nullptr;
         home_storage_value_label = nullptr;
@@ -154,6 +172,7 @@ struct ShellUi::Impl {
         home_settings_value_label = nullptr;
         storage_render_key.clear();
         home_render_key.clear();
+        wifi_scan_render_key.clear();
     }
 
     lv_obj_t* begin_screen(const char* title, bool show_back) {
@@ -302,6 +321,8 @@ struct ShellUi::Impl {
             case ScreenId::Update: show_update(); break;
             case ScreenId::Developer: show_developer(); break;
             case ScreenId::Network: show_network(); break;
+            case ScreenId::WifiScan: show_wifi_scan(); break;
+            case ScreenId::WifiCredentials: show_wifi_credentials(); break;
             case ScreenId::ForgetWifiConfirm: show_forget_wifi_confirm(); break;
             case ScreenId::Storage: show_storage(); break;
             case ScreenId::FormatConfirm: show_format_confirm(); break;
@@ -1076,6 +1097,11 @@ struct ShellUi::Impl {
             lv_label_set_long_mode(step, LV_LABEL_LONG_WRAP);
             lv_obj_set_width(step, 610);
             lv_obj_set_pos(step, 0, 205);
+
+            lv_obj_t* choose = make_action(
+                screen, "Choose Wi-Fi on this device", color(0x245BA5), color(0xFFFFFF), 672);
+            lv_obj_set_pos(choose, 24, 576);
+            lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
         } else {
             lv_obj_t* details = lv_obj_create(card);
             lv_obj_set_pos(details, 0, 58);
@@ -1091,11 +1117,167 @@ struct ShellUi::Impl {
             add_info_row(details, "Local name", "deos.local");
             add_info_row(details, "Control API", "port 80 / token auth");
 
+            lv_obj_t* choose = make_action(
+                screen, "Change Wi-Fi...", color(0x245BA5), color(0xFFFFFF), 326);
+            lv_obj_set_pos(choose, 24, 576);
+            lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
+
             lv_obj_t* forget = make_action(
-                screen, "Forget Wi-Fi...", color(0x3A2023), color(0xF2B2B7), 672);
-            lv_obj_set_pos(forget, 24, 576);
+                screen, "Forget Wi-Fi...", color(0x3A2023), color(0xF2B2B7), 326);
+            lv_obj_set_pos(forget, 370, 576);
             lv_obj_add_event_cb(forget, on_forget_confirm, LV_EVENT_CLICKED, this);
         }
+    }
+
+    void render_wifi_scan_body() {
+        if (wifi_scan_body == nullptr) {
+            return;
+        }
+
+        const platform::WifiScanSnapshot scan = network.scan_snapshot();
+        std::string key = scan.scanning ? "scanning" : scan.error;
+        for (const auto& entry : scan.entries) {
+            key += "|" + entry.ssid + ":" + std::to_string(entry.rssi);
+        }
+        if (key == wifi_scan_render_key) {
+            return;
+        }
+        wifi_scan_render_key = std::move(key);
+        wifi_scan_entries = scan.entries;
+
+        lv_obj_clean(wifi_scan_body);
+        lv_obj_set_user_data(wifi_scan_body, this);
+
+        if (scan.scanning) {
+            lv_obj_t* spinner = lv_spinner_create(wifi_scan_body);
+            lv_obj_set_size(spinner, 58, 58);
+            lv_obj_align(spinner, LV_ALIGN_TOP_LEFT, 0, 8);
+
+            lv_obj_t* text = make_label(
+                wifi_scan_body, "Scanning nearby Wi-Fi networks...", color(0x9AA5B2));
+            lv_obj_set_pos(text, 82, 26);
+            return;
+        }
+
+        if (!scan.error.empty()) {
+            const std::string error = "Scan failed: " + scan.error;
+            lv_obj_t* text = make_label(wifi_scan_body, error.c_str(), color(0xF0A8AE));
+            lv_obj_set_pos(text, 0, 8);
+
+            lv_obj_t* retry = make_action(
+                wifi_scan_body, "Scan again", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, 72);
+            lv_obj_add_event_cb(retry, on_wifi_rescan, LV_EVENT_CLICKED, this);
+            return;
+        }
+
+        if (scan.entries.empty()) {
+            lv_obj_t* text = make_label(
+                wifi_scan_body, "No networks found.", color(0x8A95A2));
+            lv_obj_set_pos(text, 0, 8);
+
+            lv_obj_t* retry = make_action(
+                wifi_scan_body, "Scan again", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, 72);
+            lv_obj_add_event_cb(retry, on_wifi_rescan, LV_EVENT_CLICKED, this);
+            return;
+        }
+
+        lv_obj_set_flex_flow(wifi_scan_body, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(wifi_scan_body, 8, 0);
+
+        for (std::size_t i = 0; i < wifi_scan_entries.size(); ++i) {
+            const auto& entry = wifi_scan_entries[i];
+            char detail[64]{};
+            std::snprintf(
+                detail,
+                sizeof(detail),
+                "%s  ·  %d dBm  ·  ch %d",
+                entry.secured ? "Secured" : "Open",
+                entry.rssi,
+                entry.channel);
+
+            lv_obj_t* row = make_row(
+                wifi_scan_body,
+                entry.ssid.c_str(),
+                detail);
+            lv_obj_set_width(row, 612);
+            lv_obj_set_user_data(
+                row,
+                reinterpret_cast<void*>(static_cast<std::uintptr_t>(i + 1)));
+            lv_obj_add_event_cb(row, on_wifi_network_selected, LV_EVENT_CLICKED, this);
+        }
+
+        lv_obj_t* rescan = make_action(
+            wifi_scan_body, "Rescan", color(0x20252D), color(0xDCE3EA), 612);
+        lv_obj_add_event_cb(rescan, on_wifi_rescan, LV_EVENT_CLICKED, this);
+    }
+
+    void show_wifi_scan() {
+        lv_obj_t* screen = begin_screen("Choose Wi-Fi", true);
+
+        wifi_scan_body = lv_obj_create(screen);
+        lv_obj_set_pos(wifi_scan_body, 24, 112);
+        lv_obj_set_size(wifi_scan_body, 672, 570);
+        set_panel_style(wifi_scan_body, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(wifi_scan_body, 24, 0);
+        lv_obj_set_style_pad_bottom(wifi_scan_body, 24, 0);
+
+        const auto current = network.scan_snapshot();
+        if (!current.scanning && current.entries.empty()) {
+            (void)network.request_scan();
+        }
+
+        wifi_scan_render_key.clear();
+        render_wifi_scan_body();
+        wifi_scan_timer = lv_timer_create(on_wifi_scan_timer, 400, this);
+    }
+
+    void show_wifi_credentials() {
+        lv_obj_t* screen = begin_screen("Join Wi-Fi", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 112);
+        lv_obj_set_size(card, 672, wifi_selected_secured ? 180 : 250);
+        set_panel_style(card, color(0x11151A), color(0x2B3440));
+        lv_obj_set_style_pad_all(card, 24, 0);
+
+        lv_obj_t* ssid = make_label(
+            card, wifi_selected_ssid.c_str(), color(0xF5F7FA), &lv_font_montserrat_28);
+        lv_obj_set_pos(ssid, 0, 0);
+
+        lv_obj_t* detail = make_label(
+            card,
+            wifi_selected_secured ? "Enter the network password." : "This network is open.",
+            color(0x8F9BA8));
+        lv_obj_set_pos(detail, 0, 48);
+
+        if (!wifi_join_error.empty()) {
+            lv_obj_t* error = make_label(card, wifi_join_error.c_str(), color(0xF0A8AE));
+            lv_obj_set_pos(error, 0, 86);
+        }
+
+        if (wifi_selected_secured) {
+            wifi_password_area = lv_textarea_create(screen);
+            lv_obj_set_pos(wifi_password_area, 24, 310);
+            lv_obj_set_size(wifi_password_area, 672, 64);
+            lv_textarea_set_one_line(wifi_password_area, true);
+            lv_textarea_set_password_mode(wifi_password_area, true);
+            lv_textarea_set_max_length(wifi_password_area, 63);
+            lv_textarea_set_placeholder_text(wifi_password_area, "Wi-Fi password");
+            lv_obj_add_event_cb(
+                wifi_password_area, on_wifi_join, LV_EVENT_READY, this);
+
+            lv_obj_t* keyboard = lv_keyboard_create(screen);
+            lv_obj_set_pos(keyboard, 24, 386);
+            lv_obj_set_size(keyboard, 672, 230);
+            lv_keyboard_set_textarea(keyboard, wifi_password_area);
+        }
+
+        lv_obj_t* join = make_action(
+            screen, "Save and connect", color(0x245BA5), color(0xFFFFFF), 672);
+        lv_obj_set_pos(join, 24, 632);
+        lv_obj_add_event_cb(join, on_wifi_join, LV_EVENT_CLICKED, this);
     }
 
     void show_forget_wifi_confirm() {
@@ -1665,6 +1847,89 @@ struct ShellUi::Impl {
 
     static void on_network(lv_event_t* event) {
         self(event)->navigate(ScreenId::Network);
+    }
+
+    static void on_wifi_scan(lv_event_t* event) {
+        self(event)->navigate(ScreenId::WifiScan);
+    }
+
+    static void on_wifi_rescan(lv_event_t* event) {
+        Impl* ui = self(event);
+        if (!ui->network.request_scan()) {
+            ESP_LOGW("deos-ui", "Wi-Fi scan request rejected");
+        }
+        ui->wifi_scan_render_key.clear();
+        ui->render_wifi_scan_body();
+    }
+
+    static void on_wifi_network_selected(lv_event_t* event) {
+        Impl* ui = self(event);
+        auto* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        const auto encoded =
+            reinterpret_cast<std::uintptr_t>(lv_obj_get_user_data(target));
+        if (encoded == 0) {
+            return;
+        }
+        const std::size_t index = static_cast<std::size_t>(encoded - 1);
+        if (index >= ui->wifi_scan_entries.size()) {
+            return;
+        }
+
+        ui->wifi_selected_ssid = ui->wifi_scan_entries[index].ssid;
+        ui->wifi_selected_secured = ui->wifi_scan_entries[index].secured;
+        ui->wifi_join_error.clear();
+        ui->navigate(ScreenId::WifiCredentials);
+    }
+
+    static void on_wifi_join(lv_event_t* event) {
+        Impl* ui = self(event);
+        std::string password;
+        if (ui->wifi_selected_secured) {
+            if (ui->wifi_password_area == nullptr) {
+                return;
+            }
+            password = lv_textarea_get_text(ui->wifi_password_area);
+            if (password.size() < 8) {
+                ui->wifi_join_error = "Password must contain at least 8 characters.";
+                ui->render_screen(ScreenId::WifiCredentials);
+                return;
+            }
+        }
+
+        const deos::ActionContext context{
+            "shell",
+            {"network.credentials"},
+        };
+        const auto result = ui->actions.invoke(
+            "network.wifi.configure",
+            context,
+            {
+                {"ssid", ui->wifi_selected_ssid},
+                {"password", password},
+            });
+
+        if (!result.ok) {
+            ui->wifi_join_error = result.message;
+            ui->render_screen(ScreenId::WifiCredentials);
+            return;
+        }
+
+        lv_obj_t* screen = ui->begin_screen("Connecting", false);
+        lv_obj_t* message = make_label(
+            screen,
+            "Wi-Fi profile saved. DEOS is rebooting and will connect automatically.",
+            color(0xD7DEE7),
+            &lv_font_montserrat_20);
+        lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(message, 620);
+        lv_obj_set_pos(message, 48, 180);
+    }
+
+    static void on_wifi_scan_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui != nullptr) {
+            ui->render_wifi_scan_body();
+        }
     }
 
     static void on_forget_confirm(lv_event_t* event) {
