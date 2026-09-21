@@ -38,7 +38,7 @@ constexpr int kMipiLdoChannel = 3;
 constexpr int kMipiLdoMv = 2500;
 constexpr int kBoardLdoChannel = 4;
 constexpr int kBoardLdoMv = 3300;
-constexpr int kDrawLines = 40;
+constexpr int kDrawLines = 50;
 constexpr int kLvglTickMs = 2;
 constexpr uint32_t kLvglTaskStack = 6144;
 constexpr UBaseType_t kLvglTaskPriority = 4;
@@ -196,7 +196,7 @@ struct DisplayController::Impl {
         // invalidated regions into these screen-sized buffers; FULL mode forces
         // a complete 720x720 software redraw on every refresh and can starve
         // IDLE0 long enough to trip the task watchdog.
-        dpi.num_fbs = 2;
+        // Waveshare BSP 3.x uses TRIPLE_PARTIAL for this 720x720 MIPI panel.\n        // Three scan-out buffers decouple DSI refresh from LVGL partial rendering.\n        dpi.num_fbs = 3;
         dpi.video_timing.h_size = kWidth;
         dpi.video_timing.v_size = kHeight;
         dpi.video_timing.hsync_back_porch = 50;
@@ -243,19 +243,21 @@ struct DisplayController::Impl {
         constexpr size_t kBytesPerPixel = 2;
         const size_t draw_bytes =
             static_cast<size_t>(kWidth) * kDrawLines * kBytesPerPixel;
+        // Match the current Waveshare/Espressif BSP strategy: TRIPLE_PARTIAL
+        // uses one small LVGL draw buffer in internal RAM. Keeping this hot
+        // render buffer out of PSRAM avoids coupling every LVGL draw operation
+        // to the external-memory bus while the DSI engine scans out frames.
         draw_buffer_a = heap_caps_aligned_calloc(
-            64, 1, draw_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        draw_buffer_b = heap_caps_aligned_calloc(
-            64, 1, draw_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (draw_buffer_a == nullptr || draw_buffer_b == nullptr) {
-            ESP_LOGE(kTag, "LVGL draw-buffer allocation failed (%u bytes each)",
+            64, 1, draw_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (draw_buffer_a == nullptr) {
+            ESP_LOGE(kTag, "LVGL internal draw-buffer allocation failed (%u bytes)",
                      static_cast<unsigned>(draw_bytes));
             return ESP_ERR_NO_MEM;
         }
 
         lv_display_set_buffers(display,
                                draw_buffer_a,
-                               draw_buffer_b,
+                               nullptr,
                                draw_bytes,
                                LV_DISPLAY_RENDER_MODE_PARTIAL);
         lv_display_set_flush_cb(display, lvgl_flush);
