@@ -2,6 +2,8 @@
 
 #include "network_controller.hpp"
 
+#include "device_preferences.hpp"
+
 #include "cJSON.h"
 #include "esp_check.h"
 #include "esp_event.h"
@@ -183,6 +185,7 @@ struct NetworkController::Impl {
     NetworkController* owner{nullptr};
     EntityRegistry& entities;
     ActionRegistry& actions;
+    DevicePreferences& preferences;
     mutable SemaphoreHandle_t state_mutex{nullptr};
     mutable SemaphoreHandle_t scan_mutex{nullptr};
     httpd_handle_t server{nullptr};
@@ -203,9 +206,12 @@ struct NetworkController::Impl {
     std::string scan_error;
     std::vector<WifiScanEntry> scan_entries;
 
-    Impl(EntityRegistry& entity_registry, ActionRegistry& action_registry)
+    Impl(EntityRegistry& entity_registry,
+         ActionRegistry& action_registry,
+         DevicePreferences& device_preferences)
         : entities(entity_registry),
-          actions(action_registry) {
+          actions(action_registry),
+          preferences(device_preferences) {
         state_mutex = xSemaphoreCreateMutex();
         scan_mutex = xSemaphoreCreateMutex();
     }
@@ -642,6 +648,16 @@ struct NetworkController::Impl {
         if (err != ESP_OK) {
             ESP_LOGE(kTag, "saving Wi-Fi profile failed: %s", esp_err_to_name(err));
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "failed to save profile");
+        }
+
+        if (!self->preferences.setup_completed()) {
+            if (!self->preferences.set_setup_step(SetupStep::Storage)) {
+                ESP_LOGE(kTag, "failed to persist onboarding resume step");
+                return httpd_resp_send_err(
+                    req,
+                    HTTPD_500_INTERNAL_SERVER_ERROR,
+                    "failed to save onboarding state");
+            }
         }
 
         static constexpr char kSaved[] =
@@ -1116,8 +1132,11 @@ struct NetworkController::Impl {
     }
 };
 
-NetworkController::NetworkController(EntityRegistry& entities, ActionRegistry& actions)
-    : impl_(std::make_unique<Impl>(entities, actions)) {
+NetworkController::NetworkController(
+    EntityRegistry& entities,
+    ActionRegistry& actions,
+    DevicePreferences& preferences)
+    : impl_(std::make_unique<Impl>(entities, actions, preferences)) {
     impl_->owner = this;
 }
 
