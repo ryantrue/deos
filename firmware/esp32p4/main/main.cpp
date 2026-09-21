@@ -244,6 +244,38 @@ extern "C" void app_main(void) {
 
         (void)actions.register_action(
             {
+                "network.wifi.configure",
+                "Configure Wi-Fi profile",
+                "Save Wi-Fi credentials from the local trusted shell and reboot",
+                "network.credentials",
+                {"ssid", "password"},
+            },
+            [](const deos::StateValues& args) -> deos::ActionResult {
+                const auto ssid_it = args.find("ssid");
+                const auto password_it = args.find("password");
+                if (ssid_it == args.end() || password_it == args.end()) {
+                    return {false, "ssid and password are required", {}};
+                }
+
+                const auto* ssid = std::get_if<std::string>(&ssid_it->second);
+                const auto* password = std::get_if<std::string>(&password_it->second);
+                if (ssid == nullptr || password == nullptr ||
+                    ssid->empty() || ssid->size() > 32 || password->size() > 63) {
+                    return {false, "invalid Wi-Fi credentials", {}};
+                }
+
+                const bool accepted =
+                    network_controller->configure_wifi_and_reboot(*ssid, *password);
+                return {
+                    accepted,
+                    accepted ? "Wi-Fi profile saved; reboot scheduled"
+                             : "Wi-Fi profile could not be saved",
+                    {},
+                };
+            });
+
+        (void)actions.register_action(
+            {
                 "network.wifi.forget",
                 "Forget Wi-Fi profile",
                 "Remove the saved Wi-Fi profile and reboot into provisioning",
