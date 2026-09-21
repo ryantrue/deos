@@ -14,6 +14,8 @@
 
 namespace deos::platform {
 
+class DevicePreferences;
+
 struct NetworkSnapshot {
     bool initialized{false};
     bool connected{false};
@@ -39,7 +41,9 @@ struct WifiScanSnapshot {
 
 class NetworkController final : public Controller {
 public:
-    NetworkController(EntityRegistry& entities, ActionRegistry& actions);
+    NetworkController(EntityRegistry& entities,
+                      ActionRegistry& actions,
+                      DevicePreferences& preferences);
     ~NetworkController() override;
 
     bool supports(std::string_view kind) const override;
