@@ -11,6 +11,7 @@ idf_component_register(
         "telemetry_service.cpp"
         "touch_controller.cpp"
         "ui_runtime.cpp"
+        "ui_navigation.cpp"
         "ui_shell.cpp"
         "update_controller.cpp"
     INCLUDE_DIRS "."
