@@ -12,6 +12,8 @@ idf_component_register(
         "touch_controller.cpp"
         "ui_runtime.cpp"
         "ui_navigation.cpp"
+        "ui_theme.cpp"
+        "ui_widgets.cpp"
         "ui_shell.cpp"
         "update_controller.cpp"
     INCLUDE_DIRS "."
