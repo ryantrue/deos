@@ -184,6 +184,7 @@ struct NetworkController::Impl {
     EntityRegistry& entities;
     ActionRegistry& actions;
     mutable SemaphoreHandle_t state_mutex{nullptr};
+    mutable SemaphoreHandle_t scan_mutex{nullptr};
     httpd_handle_t server{nullptr};
     esp_netif_t* netif{nullptr};
     esp_event_handler_instance_t wifi_handler{nullptr};
@@ -198,16 +199,23 @@ struct NetworkController::Impl {
     bool is_connected{false};
     bool is_provisioning{false};
     int retry_count{0};
+    bool scan_in_progress{false};
+    std::string scan_error;
+    std::vector<WifiScanEntry> scan_entries;
 
     Impl(EntityRegistry& entity_registry, ActionRegistry& action_registry)
         : entities(entity_registry),
           actions(action_registry) {
         state_mutex = xSemaphoreCreateMutex();
+        scan_mutex = xSemaphoreCreateMutex();
     }
 
     ~Impl() {
         if (state_mutex != nullptr) {
             vSemaphoreDelete(state_mutex);
+        }
+        if (scan_mutex != nullptr) {
+            vSemaphoreDelete(scan_mutex);
         }
     }
 
@@ -221,6 +229,28 @@ struct NetworkController::Impl {
         if (state_mutex != nullptr) {
             (void)xSemaphoreGive(state_mutex);
         }
+    }
+
+    void lock_scan() const {
+        if (scan_mutex != nullptr) {
+            (void)xSemaphoreTake(scan_mutex, portMAX_DELAY);
+        }
+    }
+
+    void unlock_scan() const {
+        if (scan_mutex != nullptr) {
+            (void)xSemaphoreGive(scan_mutex);
+        }
+    }
+
+    WifiScanSnapshot scan_snapshot_state() const {
+        WifiScanSnapshot result;
+        lock_scan();
+        result.scanning = scan_in_progress;
+        result.error = scan_error;
+        result.entries = scan_entries;
+        unlock_scan();
+        return result;
     }
 
     NetworkSnapshot snapshot_state() const {
@@ -255,8 +285,10 @@ struct NetworkController::Impl {
 
         if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
             const NetworkSnapshot state = self->snapshot_state();
-            ESP_LOGI(kTag, "station started, connecting to '%s'", state.ssid.c_str());
-            (void)esp_wifi_connect();
+            if (!state.provisioning && !state.ssid.empty()) {
+                ESP_LOGI(kTag, "station started, connecting to '%s'", state.ssid.c_str());
+                (void)esp_wifi_connect();
+            }
             return;
         }
 
@@ -292,6 +324,124 @@ struct NetworkController::Impl {
             self->retry_count = 0;
             ESP_LOGI(kTag, "Wi-Fi connected: %s", ip);
         }
+    }
+
+    static void scan_worker(void* arg) {
+        auto* self = static_cast<Impl*>(arg);
+        if (self == nullptr) {
+            vTaskDelete(nullptr);
+            return;
+        }
+
+        self->lock_scan();
+        self->scan_entries.clear();
+        self->scan_error.clear();
+        self->scan_in_progress = true;
+        self->unlock_scan();
+
+        wifi_scan_config_t config{};
+        config.show_hidden = false;
+        config.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+
+        esp_err_t err = esp_wifi_scan_start(&config, true);
+        std::vector<WifiScanEntry> discovered;
+
+        if (err == ESP_OK) {
+            uint16_t count = 0;
+            err = esp_wifi_scan_get_ap_num(&count);
+            if (err == ESP_OK && count > 0) {
+                constexpr uint16_t kMaxScanResults = 16;
+                count = std::min<uint16_t>(count, kMaxScanResults);
+
+                std::vector<wifi_ap_record_t> records(count);
+                uint16_t returned = count;
+                err = esp_wifi_scan_get_ap_records(&returned, records.data());
+
+                if (err == ESP_OK) {
+                    discovered.reserve(returned);
+                    for (uint16_t i = 0; i < returned; ++i) {
+                        const auto& record = records[i];
+                        const char* ssid =
+                            reinterpret_cast<const char*>(record.ssid);
+                        if (ssid == nullptr || ssid[0] == '\0') {
+                            continue;
+                        }
+
+                        const std::string name(ssid);
+                        const bool duplicate = std::any_of(
+                            discovered.begin(),
+                            discovered.end(),
+                            [&](const WifiScanEntry& item) {
+                                return item.ssid == name;
+                            });
+                        if (duplicate) {
+                            continue;
+                        }
+
+                        discovered.push_back({
+                            name,
+                            static_cast<int>(record.rssi),
+                            static_cast<int>(record.primary),
+                            record.authmode != WIFI_AUTH_OPEN,
+                        });
+                    }
+                }
+            }
+        }
+
+        if (err != ESP_OK) {
+            (void)esp_wifi_clear_ap_list();
+        }
+
+        self->lock_scan();
+        self->scan_entries = std::move(discovered);
+        self->scan_error =
+            err == ESP_OK ? std::string{} : std::string(esp_err_to_name(err));
+        self->scan_in_progress = false;
+        self->unlock_scan();
+
+        if (err == ESP_OK) {
+            ESP_LOGI(
+                kTag,
+                "Wi-Fi scan complete: %u network(s)",
+                static_cast<unsigned>(self->scan_entries.size()));
+        } else {
+            ESP_LOGW(kTag, "Wi-Fi scan failed: %s", esp_err_to_name(err));
+        }
+
+        vTaskDelete(nullptr);
+    }
+
+    bool request_scan_async() {
+        const NetworkSnapshot state = snapshot_state();
+        if (!state.initialized) {
+            return false;
+        }
+
+        lock_scan();
+        if (scan_in_progress) {
+            unlock_scan();
+            return false;
+        }
+        scan_in_progress = true;
+        scan_error.clear();
+        unlock_scan();
+
+        const BaseType_t created = xTaskCreate(
+            scan_worker,
+            "deos-wifi-scan",
+            6144,
+            this,
+            4,
+            nullptr);
+        if (created != pdPASS) {
+            lock_scan();
+            scan_in_progress = false;
+            scan_error = "could not start scan task";
+            unlock_scan();
+            return false;
+        }
+        return true;
     }
 
     esp_err_t init_nvs() {
@@ -846,7 +996,7 @@ struct NetworkController::Impl {
         config.ap.max_connection = 4;
         config.ap.authmode = WIFI_AUTH_WPA2_PSK;
 
-        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_AP), kTag, "set AP mode failed");
+        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), kTag, "set AP+STA mode failed");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &config), kTag, "set AP config failed");
         ESP_RETURN_ON_ERROR(esp_wifi_start(), kTag, "start setup AP failed");
 
@@ -1040,6 +1190,41 @@ std::string NetworkController::setup_password() const {
 
 NetworkSnapshot NetworkController::snapshot() const {
     return impl_->snapshot_state();
+}
+
+WifiScanSnapshot NetworkController::scan_snapshot() const {
+    return impl_->scan_snapshot_state();
+}
+
+bool NetworkController::request_scan() {
+    return impl_->request_scan_async();
+}
+
+bool NetworkController::configure_wifi_and_reboot(
+    const std::string& ssid,
+    const std::string& password) {
+
+    if (!impl_->snapshot_state().initialized ||
+        ssid.empty() ||
+        ssid.size() > 32 ||
+        password.size() > 63) {
+        return false;
+    }
+
+    const esp_err_t err = impl_->save_wifi(ssid, password);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "saving Wi-Fi profile failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(kTag, "Wi-Fi profile saved from local UI; reboot scheduled");
+    return xTaskCreate(
+               restart_task,
+               "deos-net-config",
+               2048,
+               nullptr,
+               5,
+               nullptr) == pdPASS;
 }
 
 bool NetworkController::forget_wifi_and_reboot() {
