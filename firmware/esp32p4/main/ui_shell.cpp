@@ -125,26 +125,27 @@ struct ShellUi::Impl {
           developer_mode(device_preferences.developer_mode()) {}
 
     ~Impl() {
-        stop_storage_timer();
+        reset_screen_lifecycle();
     }
 
-    void stop_storage_timer() {
-        if (storage_timer != nullptr) {
-            lv_timer_delete(storage_timer);
-            storage_timer = nullptr;
+    static void delete_timer(lv_timer_t*& timer) {
+        if (timer != nullptr) {
+            lv_timer_delete(timer);
+            timer = nullptr;
         }
-        if (home_timer != nullptr) {
-            lv_timer_delete(home_timer);
-            home_timer = nullptr;
-        }
-        if (wifi_scan_timer != nullptr) {
-            lv_timer_delete(wifi_scan_timer);
-            wifi_scan_timer = nullptr;
-        }
-        if (toast_timer != nullptr) {
-            lv_timer_delete(toast_timer);
-            toast_timer = nullptr;
-        }
+    }
+
+    void reset_screen_lifecycle() {
+        // Timers may call back into widgets owned by the current LVGL screen.
+        // Stop them before lv_obj_clean() invalidates those widgets.
+        delete_timer(storage_timer);
+        delete_timer(home_timer);
+        delete_timer(wifi_scan_timer);
+        delete_timer(toast_timer);
+
+        // All pointers below are non-owning references into the active screen.
+        // Clearing them at the same lifecycle boundary prevents stale LVGL
+        // objects from surviving a navigation transition.
         toast_obj = nullptr;
         storage_body = nullptr;
         wifi_scan_body = nullptr;
@@ -154,14 +155,14 @@ struct ShellUi::Impl {
         home_storage_value_label = nullptr;
         home_control_value_label = nullptr;
         home_settings_value_label = nullptr;
+
         storage_render_key.clear();
         home_render_key.clear();
         wifi_scan_render_key.clear();
     }
 
     lv_obj_t* begin_screen(const char* title, bool show_back) {
-        stop_storage_timer();
-        brightness_value_label = nullptr;
+        reset_screen_lifecycle();
         lv_display_set_default(display);
 
         lv_obj_t* screen = lv_screen_active();
@@ -286,10 +287,7 @@ struct ShellUi::Impl {
     }
 
     void dismiss_toast() {
-        if (toast_timer != nullptr) {
-            lv_timer_delete(toast_timer);
-            toast_timer = nullptr;
-        }
+        delete_timer(toast_timer);
         if (toast_obj != nullptr && lv_obj_is_valid(toast_obj)) {
             lv_obj_delete(toast_obj);
         }
