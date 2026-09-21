@@ -63,6 +63,7 @@ jobs:
           touch="$firmware/touch_controller.cpp"
           shell="$firmware/ui_shell.cpp"
           widgets="$firmware/ui_widgets.cpp"
+          home="$firmware/ui_home_screen.cpp"
 
           grep -Fq 'dpi.num_fbs = 2;' "$display"
           grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
@@ -73,7 +74,7 @@ jobs:
           grep -Fq 'data->point.y = self->last_y;' "$touch"
 
           ! grep -Fq 'label(screen, "DEOS"' "$shell"
-          grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$shell"
+          grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$home"
           grep -Fq 'lv_obj_set_style_transform_scale' "$widgets"
           grep -Fq '"screen: %s"' "$shell"
 
