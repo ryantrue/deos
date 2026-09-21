@@ -516,12 +516,11 @@ struct NetworkController::Impl {
             json,
             sizeof(json),
             "{\"device\":\"deos\",\"network\":{\"mode\":\"%s\","
-            "\"connected\":%s,\"ip\":\"%s\",\"ssid\":\"%s\"},"
-            "\"remote\":{\"ota\":true,\"auth\":\"token\"}}",
+            "\"connected\":%s,\"ip\":\"%s\"},"
+            "\"remote\":{\"ota\":true,\"state_actions\":true,\"auth\":\"token\"}}",
             state.provisioning ? "setup-ap" : "station",
             state.connected ? "true" : "false",
-            state.ip.c_str(),
-            state.ssid.c_str());
+            state.ip.c_str());
 
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, json);
