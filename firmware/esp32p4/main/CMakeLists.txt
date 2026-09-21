@@ -12,6 +12,7 @@ idf_component_register(
         "touch_controller.cpp"
         "ui_runtime.cpp"
         "ui_navigation.cpp"
+        "ui_settings_screen.cpp"
         "ui_home_screen.cpp"
         "ui_theme.cpp"
         "ui_widgets.cpp"
