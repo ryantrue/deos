@@ -41,7 +41,10 @@ System -> Network -> Update
 Pass when:
 
 - GT911 is detected at either supported address;
+- one physical tap produces one `GT911 press` and one `GT911 release` log entry;
+- the release retains the last valid press coordinate so LVGL emits `CLICKED`;
 - tap coordinates match the visible control under the finger;
+- every navigation prints `deos-ui: screen: <name>` in the serial log;
 - Home tiles are tappable as whole cards;
 - Back returns to the previous system surface;
 - Home clears navigation history;
@@ -59,7 +62,18 @@ Home -> Quick Settings -> Network -> Back -> Quick Settings
 Apps -> Control -> Back -> Apps
 ```
 
-## 3. Motion and feedback
+## 3. Display stability
+
+Pass when:
+
+- a static Home screen remains visually stable for at least 60 seconds;
+- no old/new UI generations alternate between refreshes;
+- opening Settings replaces Home completely and the new screen remains visible;
+- repeated Home/Settings navigation has no tearing, flashing or stale rectangles;
+- the DPI driver exposes two complete framebuffers to LVGL in full render mode;
+- serial output contains no LVGL watchdog or framebuffer allocation failure.
+
+## 4. Motion and feedback
 
 Pass when:
 
@@ -71,7 +85,7 @@ Pass when:
 
 If transitions make interaction visibly slower, disable/reduce them rather than accepting degraded input latency.
 
-## 4. Direct boot into the operating shell
+## 5. Direct boot into the operating shell
 
 With NVS cleared, verify:
 
@@ -86,7 +100,7 @@ Pass when:
 - all device configuration is reachable from normal Settings screens;
 - a legacy onboarding state in NVS cannot divert boot away from Home.
 
-## 5. Wi-Fi and local control
+## 6. Wi-Fi and local control
 
 Pass when:
 
@@ -103,7 +117,7 @@ Pass when:
 - forgetting Wi-Fi preserves device/API identity but removes SSID/password;
 - after forget + reboot, local Settings can configure Wi-Fi again.
 
-## 6. State + Actions
+## 7. State + Actions
 
 Pass when local UI shows live typed state for at least:
 
@@ -127,7 +141,7 @@ Pass when these Actions work through the registry:
 
 The UI must not directly bypass the Action/Resource model for durable configuration.
 
-## 7. SD: absent
+## 8. SD: absent
 
 Boot with no card.
 
@@ -140,7 +154,7 @@ Pass when:
 
 Insert a card and use Rescan.
 
-## 8. SD: readable foreign card
+## 9. SD: readable foreign card
 
 Use a FAT card containing ordinary user files but no `DEOS/.volume`.
 
@@ -155,7 +169,7 @@ Pass when:
 - `Initialize for DEOS` creates the DEOS directories and marker without deleting the pre-existing test files;
 - after initialization, state becomes `ready`.
 
-## 9. SD: unsupported/foreign partition layout
+## 10. SD: unsupported/foreign partition layout
 
 Use a disposable test card with an unsupported filesystem or stale/multi-partition/GPT layout.
 
@@ -172,7 +186,7 @@ Pass when:
 
 Never perform this test on a card containing data that has not been backed up.
 
-## 10. Display settings
+## 11. Display settings
 
 Pass when:
 
@@ -183,7 +197,7 @@ Pass when:
 - brightness persists across reboot/OTA;
 - UI reports the actual Action result.
 
-## 11. Developer Mode
+## 12. Developer Mode
 
 Pass when:
 
@@ -195,7 +209,7 @@ Pass when:
 - disabling does not change normal boot behavior;
 - normal users never see recovery/safe-mode choices.
 
-## 12. Remote API
+## 13. Remote API
 
 On the trusted development LAN:
 
@@ -220,7 +234,7 @@ Pass when:
 - remote actor cannot invoke `storage.destructive`;
 - malformed JSON/action arguments do not crash the HTTP service.
 
-## 13. A/B OTA
+## 14. A/B OTA
 
 The first migration from the old factory partition table is done by one full USB bootstrap.
 
@@ -238,7 +252,7 @@ After station networking is working:
 
 Pass when OTA never requires rewriting the partition table/bootloader during an ordinary app update.
 
-## 14. Resource budget
+## 15. Resource budget
 
 Record after the acceptance run:
 

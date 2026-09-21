@@ -13,6 +13,7 @@
 #include "esp_log.h"
 #include "lvgl.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -36,13 +37,23 @@ struct TouchController::Impl {
     bool initialized{false};
     bool was_pressed{false};
     uint32_t read_errors{0};
+    int32_t last_x{0};
+    int32_t last_y{0};
 
     static void read(lv_indev_t* indev_handle, lv_indev_data_t* data) {
         auto* self = static_cast<Impl*>(lv_indev_get_user_data(indev_handle));
         if (self == nullptr || self->touch == nullptr) {
+            data->point.x = 0;
+            data->point.y = 0;
             data->state = LV_INDEV_STATE_RELEASED;
             return;
         }
+
+        // LVGL determines CLICKED from both press and release coordinates.
+        // Preserve the last valid point on release and transient I2C errors;
+        // otherwise the release may appear at (0, 0) and cancel the tap.
+        data->point.x = self->last_x;
+        data->point.y = self->last_y;
 
         const esp_err_t read_err = esp_lcd_touch_read_data(self->touch);
         if (read_err != ESP_OK) {
@@ -65,8 +76,10 @@ struct TouchController::Impl {
         esp_lcd_touch_point_data_t point{};
         uint8_t count = 0;
         if (esp_lcd_touch_get_data(self->touch, &point, &count, 1) == ESP_OK && count > 0) {
-            data->point.x = static_cast<int32_t>(point.x);
-            data->point.y = static_cast<int32_t>(point.y);
+            self->last_x = std::clamp<int32_t>(point.x, 0, kWidth - 1);
+            self->last_y = std::clamp<int32_t>(point.y, 0, kHeight - 1);
+            data->point.x = self->last_x;
+            data->point.y = self->last_y;
             data->state = LV_INDEV_STATE_PRESSED;
             if (!self->was_pressed) {
                 ESP_LOGI(

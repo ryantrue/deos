@@ -32,12 +32,12 @@ Rules:
 
 ```text
 Home
-├── AI
-├── Control
-├── Automations
-├── Storage
 ├── System
+├── Storage
+├── Control
 ├── Apps
+│   ├── AI
+│   └── Automations
 └── Settings
     ├── Network
     ├── Display
@@ -50,13 +50,13 @@ Home
 The Home dock provides direct access to:
 
 ```text
-Home  ·  Control  ·  AI  ·  Apps
+Home  /  Control  /  Apps  /  Settings
 ```
 
 The top-right system status pill is interactive and opens **Quick Settings**. Its label reflects the current connectivity state:
 
 ```text
-LOCAL  ·  SETUP  ·  WIFI
+OFFLINE  /  ONLINE
 ```
 
 Quick Settings provides brightness plus direct Network, Storage and Settings entry points. Brightness still updates `Display/primary` desired state through the reconciler; system chrome never bypasses the resource model.
@@ -119,7 +119,7 @@ DEOS uses motion to preserve spatial continuity, not as decoration.
 
 Current shell rules:
 
-- system surface changes use a short ~120 ms fade;
+- system surface changes are immediate on the reference target;
 - pressed states remain immediate and are not delayed by animation;
 - successful/failed local Actions may show a transient system toast;
 - toasts report the actual Action result rather than assuming success;
@@ -137,7 +137,9 @@ These are targets, not yet hardware-certified guarantees:
 - avoid expensive work in LVGL callbacks;
 - storage formatting and similar operations run on worker tasks;
 - redraw stateful screens only when their underlying snapshot changes;
-- prefer partial rendering and bounded object trees;
+- use coherent double full-frame rendering on the ESP32-P4 reference target;
+- do not combine rotating panel framebuffers with unrelated partial draw buffers;
+- keep bounded object trees and redraw live state only when it changes;
 - keep the shell useful even if optional network or AI services fail.
 
 ## Visual direction

@@ -54,6 +54,27 @@ jobs:
           ! grep -R -F 'uri = "/setup"' "$firmware"
           grep -Fq 'impl_->go_home();' "$firmware/ui_shell.cpp"
 
+      - name: Verify display, touch and shell integration policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          firmware="firmware/esp32p4/main"
+          display="$firmware/display_controller.cpp"
+          touch="$firmware/touch_controller.cpp"
+          shell="$firmware/ui_shell.cpp"
+
+          grep -Fq 'dpi.num_fbs = 2;' "$display"
+          grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
+          grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
+          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
+
+          grep -Fq 'data->point.x = self->last_x;' "$touch"
+          grep -Fq 'data->point.y = self->last_y;' "$touch"
+
+          ! grep -Fq 'make_label(screen, "DEOS"' "$shell"
+          grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$shell"
+          grep -Fq '"screen: %s"' "$shell"
+
       - name: Collect flash package
         shell: bash
         env:
