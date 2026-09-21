@@ -66,10 +66,12 @@ jobs:
           home="$firmware/ui_home_screen.cpp"
 
           grep -Fq 'dpi.num_fbs = 2;' "$display"
-          grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
-          grep -Fq 'LV_DISPLAY_RENDER_MODE_DIRECT' "$display"
+          grep -Fq 'heap_caps_aligned_calloc' "$display"
+          grep -Fq 'MALLOC_CAP_SPIRAM' "$display"
+          grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
+          ! grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
           ! grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
-          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
+          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_DIRECT' "$display"
 
           grep -Fq 'data->point.x = self->last_x;' "$touch"
           grep -Fq 'data->point.y = self->last_y;' "$touch"
