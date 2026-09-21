@@ -54,6 +54,20 @@ class DeosCtlTests(unittest.TestCase):
     def test_resolve_token_explicit(self):
         self.assertEqual(deosctl.resolve_token("abc123"), "abc123")
 
+    def test_parse_action_arg(self):
+        self.assertEqual(deosctl.parse_action_arg("value=70"), ("value", 70))
+        self.assertEqual(deosctl.parse_action_arg("enabled=true"), ("enabled", True))
+        self.assertEqual(deosctl.parse_action_arg("name=qwen"), ("name", "qwen"))
+        self.assertEqual(deosctl.parse_action_arg('label="hello world"'), ("label", "hello world"))
+
+    def test_parse_action_arg_rejects_missing_key(self):
+        with self.assertRaises(SystemExit):
+            deosctl.parse_action_arg("=1")
+
+    def test_parse_action_arg_rejects_non_scalar(self):
+        with self.assertRaises(SystemExit):
+            deosctl.parse_action_arg("payload={\"a\":1}")
+
     def test_plan_is_deterministic(self):
         desired = manifest([
             resource("Display", "primary", spec={"brightness": 70}),
