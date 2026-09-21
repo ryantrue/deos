@@ -55,9 +55,19 @@ bool path_exists(const char* path) {
 }
 
 esp_err_t ensure_directory(const char* path) {
-    if (mkdir(path, 0775) == 0 || errno == EEXIST) {
+    if (mkdir(path, 0775) == 0) {
         return ESP_OK;
     }
+
+    if (errno == EEXIST) {
+        struct stat info {};
+        if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+            return ESP_OK;
+        }
+        ESP_LOGE(kTag, "%s exists but is not a directory", path);
+        return ESP_FAIL;
+    }
+
     ESP_LOGE(kTag, "mkdir %s failed: %s", path, std::strerror(errno));
     return ESP_FAIL;
 }
@@ -287,13 +297,18 @@ struct StorageController::Impl {
             return ESP_FAIL;
         }
 
-        std::fputs(
+        const int write_result = std::fputs(
             "DEOS_VOLUME=1\n"
             "schema=1\n"
             "filesystem=fat\n"
             "portable=true\n",
             marker);
-        std::fclose(marker);
+        const int flush_result = std::fflush(marker);
+        const int close_result = std::fclose(marker);
+        if (write_result < 0 || flush_result != 0 || close_result != 0) {
+            ESP_LOGE(kTag, "writing volume marker failed: %s", std::strerror(errno));
+            return ESP_FAIL;
+        }
 
         update_capacity();
         set_status(SdVolumeState::Ready, "DEOS directory layout initialized");

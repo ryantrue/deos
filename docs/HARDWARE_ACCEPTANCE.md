@@ -211,6 +211,7 @@ python3 tools/deosctl/deosctl.py invoke display.brightness.set --arg value=65
 
 Pass when:
 
+- status reports `firmware.slot` (`ota_0` or `ota_1`) and `firmware.ota_state`;
 - read-only/status behavior follows the documented policy;
 - authenticated mutations require the per-device token;
 - generic remote Action invocation is capability-gated;
@@ -228,7 +229,8 @@ After station networking is working:
 3. run `deosctl ota <image>`;
 4. observe reboot;
 5. confirm the alternate OTA slot is active;
-6. confirm local health checks mark the image valid;
+6. confirm the serial log reports the 10 second stability window and status
+   reports `valid` after it expires;
 7. confirm settings/NVS survive;
 8. repeat in the opposite direction later.
 

@@ -36,6 +36,8 @@ jobs:
 
       - name: Collect flash package
         shell: bash
+        env:
+          DEOS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           package="firmware/esp32p4/artifact"
@@ -79,7 +81,8 @@ jobs:
 
           {
             echo "DEOS ESP32-P4 CI flash package"
-            echo "commit=$GITHUB_SHA"
+            echo "source_commit=$DEOS_SOURCE_SHA"
+            echo "tested_commit=$GITHUB_SHA"
             echo "idf=6.1"
             echo "target=esp32p4"
             echo

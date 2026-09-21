@@ -5,12 +5,14 @@
 #include "device_preferences.hpp"
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_hosted.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "mdns.h"
@@ -42,6 +44,37 @@ constexpr char kPassKey[] = "wifi_pass";
 constexpr char kTokenKey[] = "api_token";
 constexpr int kMaxRetries = 20;
 constexpr size_t kMaxSetupBody = 768;
+
+bool valid_wifi_credentials(std::string_view ssid, std::string_view password) {
+    if (ssid.empty() || ssid.size() > 32 || password.size() > 63) {
+        return false;
+    }
+
+    // An empty password selects an open network. WPA/WPA2/WPA3 passphrases
+    // accepted by this UI are 8..63 characters.
+    return password.empty() || password.size() >= 8;
+}
+
+const char* ota_state_name(const esp_partition_t* partition) {
+    if (partition == nullptr) {
+        return "unknown";
+    }
+
+    esp_ota_img_states_t state{};
+    if (esp_ota_get_state_partition(partition, &state) != ESP_OK) {
+        return "undefined";
+    }
+
+    switch (state) {
+        case ESP_OTA_IMG_NEW: return "new";
+        case ESP_OTA_IMG_PENDING_VERIFY: return "pending-verify";
+        case ESP_OTA_IMG_VALID: return "valid";
+        case ESP_OTA_IMG_INVALID: return "invalid";
+        case ESP_OTA_IMG_ABORTED: return "aborted";
+        case ESP_OTA_IMG_UNDEFINED: return "undefined";
+    }
+    return "unknown";
+}
 
 void restart_task(void*) {
     vTaskDelay(pdMS_TO_TICKS(1200));
@@ -640,7 +673,7 @@ struct NetworkController::Impl {
 
         const std::string ssid = form_value(body, "ssid");
         const std::string password = form_value(body, "password");
-        if (ssid.empty() || ssid.size() > 32 || password.size() > 63) {
+        if (!valid_wifi_credentials(ssid, password)) {
             return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid SSID or password");
         }
 
@@ -677,19 +710,50 @@ struct NetworkController::Impl {
         }
 
         const NetworkSnapshot state = self->snapshot_state();
-        char json[512]{};
-        std::snprintf(
-            json,
-            sizeof(json),
-            "{\"device\":\"deos\",\"network\":{\"mode\":\"%s\","
-            "\"connected\":%s,\"ip\":\"%s\"},"
-            "\"remote\":{\"ota\":true,\"state_actions\":true,\"auth\":\"token\"}}",
-            state.provisioning ? "setup-ap" : "station",
-            state.connected ? "true" : "false",
-            state.ip.c_str());
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_app_desc_t* app = esp_app_get_description();
 
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req, json);
+        cJSON* root = cJSON_CreateObject();
+        if (root == nullptr) {
+            return httpd_resp_send_err(
+                req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+        }
+        cJSON_AddStringToObject(root, "device", "deos");
+
+        cJSON* network = cJSON_AddObjectToObject(root, "network");
+        cJSON* firmware = cJSON_AddObjectToObject(root, "firmware");
+        cJSON* remote = cJSON_AddObjectToObject(root, "remote");
+        if (network == nullptr || firmware == nullptr || remote == nullptr) {
+            cJSON_Delete(root);
+            return httpd_resp_send_err(
+                req, HTTPD_500_INTERNAL_SERVER_ERROR, "json allocation failed");
+        }
+
+        cJSON_AddStringToObject(
+            network,
+            "mode",
+            state.provisioning ? "setup-ap" : "station");
+        cJSON_AddBoolToObject(network, "connected", state.connected);
+        cJSON_AddStringToObject(network, "ip", state.ip.c_str());
+
+        cJSON_AddStringToObject(
+            firmware,
+            "version",
+            app != nullptr ? app->version : "unknown");
+        cJSON_AddStringToObject(
+            firmware,
+            "idf_version",
+            app != nullptr ? app->idf_ver : "unknown");
+        cJSON_AddStringToObject(
+            firmware,
+            "slot",
+            running != nullptr ? running->label : "unknown");
+        cJSON_AddStringToObject(firmware, "ota_state", ota_state_name(running));
+
+        cJSON_AddBoolToObject(remote, "ota", true);
+        cJSON_AddBoolToObject(remote, "state_actions", true);
+        cJSON_AddStringToObject(remote, "auth", "token");
+        return send_json(req, root);
     }
 
     static esp_err_t entities_api(httpd_req_t* req) {
@@ -1224,9 +1288,7 @@ bool NetworkController::configure_wifi_and_reboot(
     const std::string& password) {
 
     if (!impl_->snapshot_state().initialized ||
-        ssid.empty() ||
-        ssid.size() > 32 ||
-        password.size() > 63) {
+        !valid_wifi_credentials(ssid, password)) {
         return false;
     }
 
@@ -1263,5 +1325,3 @@ bool NetworkController::forget_wifi_and_reboot() {
 }
 
 }  // namespace deos::platform
-
-

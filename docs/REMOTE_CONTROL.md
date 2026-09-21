@@ -32,6 +32,10 @@ Read-only status does not require a token:
 GET /api/v1/status
 ```
 
+Status includes the active OTA slot, firmware/ESP-IDF versions and the current
+OTA image state. This makes slot switches and rollback acceptance observable
+without relying only on serial logs.
+
 Typed state/action introspection and state-changing developer endpoints require:
 
 ```http
@@ -136,6 +140,8 @@ reboot
         ↓
 local DEOS health checks
         ↓
+10 second runtime stability window
+        ↓
 mark application valid
 ```
 
@@ -147,6 +153,10 @@ The local health check currently requires:
 - `Input/touch = Ready`
 
 External Wi-Fi reachability is deliberately not part of rollback health. A router outage must not make a valid OS image roll back.
+
+If the local health checks fail, the stability task cannot be started, or the
+new image resets during the stability window, the image remains pending and
+the ESP-IDF bootloader can roll it back on the next boot.
 
 ## First migration to the OTA partition table
 

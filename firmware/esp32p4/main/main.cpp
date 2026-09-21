@@ -18,11 +18,15 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include <memory>
 #include <string>
 
 namespace {
 constexpr const char* TAG = "deos";
+constexpr TickType_t kOtaStabilityDelay = pdMS_TO_TICKS(10000);
 
 class SystemController final : public deos::Controller {
 public:
@@ -49,7 +53,19 @@ bool resource_ready(const deos::Reconciler& engine,
            it->second.status.phase == deos::Phase::Ready;
 }
 
-void validate_ota_if_healthy(const deos::Reconciler& engine) {
+void mark_ota_valid_after_stability_delay(void*) {
+    vTaskDelay(kOtaStabilityDelay);
+
+    const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OTA image marked VALID after stability delay");
+    } else {
+        ESP_LOGE(TAG, "failed to mark OTA image valid: %s", esp_err_to_name(err));
+    }
+    vTaskDelete(nullptr);
+}
+
+void schedule_ota_validation_if_healthy(const deos::Reconciler& engine) {
     const esp_partition_t* running = esp_ota_get_running_partition();
     if (running == nullptr) {
         return;
@@ -67,15 +83,22 @@ void validate_ota_if_healthy(const deos::Reconciler& engine) {
         resource_ready(engine, "Shell", "home") &&
         resource_ready(engine, "Input", "touch");
 
-    if (healthy) {
-        const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "OTA image marked VALID after local health checks");
-        } else {
-            ESP_LOGE(TAG, "failed to mark OTA image valid: %s", esp_err_to_name(err));
-        }
-    } else {
+    if (!healthy) {
         ESP_LOGE(TAG, "OTA image remains pending: local health checks did not pass");
+        return;
+    }
+
+    const BaseType_t scheduled = xTaskCreate(
+        mark_ota_valid_after_stability_delay,
+        "deos-ota-health",
+        3072,
+        nullptr,
+        4,
+        nullptr);
+    if (scheduled == pdPASS) {
+        ESP_LOGI(TAG, "OTA image healthy; waiting 10 seconds before marking VALID");
+    } else {
+        ESP_LOGE(TAG, "OTA image remains pending: could not start stability check");
     }
 }
 
@@ -392,7 +415,7 @@ extern "C" void app_main(void) {
     // OTA validity is deliberately a local health decision. Mark a healthy
     // display/shell/touch image valid before optional network bring-up can
     // block or fail because of a missing router/C6 firmware mismatch.
-    validate_ota_if_healthy(engine);
+    schedule_ota_validation_if_healthy(engine);
 
     ESP_LOGI(TAG, "boot stage 2: optional connectivity and remote update");
 

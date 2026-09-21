@@ -26,6 +26,7 @@ namespace {
 
 constexpr char kTag[] = "deos-update";
 constexpr size_t kChunkSize = 4096;
+constexpr unsigned kMaxConsecutiveReceiveTimeouts = 5;
 
 void reboot_after_ota(void*) {
     vTaskDelay(pdMS_TO_TICKS(900));
@@ -99,6 +100,7 @@ struct UpdateController::Impl {
         std::array<uint8_t, kChunkSize> buffer{};
         int remaining = req->content_len;
         size_t written = 0;
+        unsigned consecutive_timeouts = 0;
 
         while (remaining > 0) {
             const size_t want = std::min(
@@ -110,14 +112,28 @@ struct UpdateController::Impl {
                 want);
 
             if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
+                ++consecutive_timeouts;
+                if (consecutive_timeouts < kMaxConsecutiveReceiveTimeouts) {
+                    continue;
+                }
+
+                ESP_LOGE(kTag, "OTA receive timed out after %u bytes",
+                         static_cast<unsigned>(written));
+                (void)esp_ota_abort(handle);
+                httpd_resp_set_status(req, "408 Request Timeout");
+                return httpd_resp_sendstr(req, "OTA upload timed out");
             }
             if (received <= 0) {
                 ESP_LOGE(kTag, "OTA socket receive failed after %u bytes",
                          static_cast<unsigned>(written));
                 (void)esp_ota_abort(handle);
-                return ESP_FAIL;
+                return httpd_resp_send_err(
+                    req,
+                    HTTPD_500_INTERNAL_SERVER_ERROR,
+                    "OTA upload interrupted");
             }
+
+            consecutive_timeouts = 0;
 
             err = esp_ota_write(handle, buffer.data(), static_cast<size_t>(received));
             if (err != ESP_OK) {
@@ -142,21 +158,34 @@ struct UpdateController::Impl {
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "boot switch failed");
         }
 
-        char json[192]{};
+        const BaseType_t reboot_scheduled = xTaskCreate(
+            reboot_after_ota,
+            "deos-ota-reboot",
+            2048,
+            nullptr,
+            5,
+            nullptr);
+        const bool rebooting = reboot_scheduled == pdPASS;
+        if (!rebooting) {
+            ESP_LOGE(kTag, "OTA accepted but automatic reboot could not be scheduled");
+        }
+
+        char json[224]{};
         std::snprintf(
             json,
             sizeof(json),
-            "{\"accepted\":true,\"bytes\":%u,\"slot\":\"%s\",\"rebooting\":true}",
+            "{\"accepted\":true,\"bytes\":%u,\"slot\":\"%s\","
+            "\"rebooting\":%s,\"manual_reboot_required\":%s}",
             static_cast<unsigned>(written),
-            update_partition->label);
+            update_partition->label,
+            rebooting ? "true" : "false",
+            rebooting ? "false" : "true");
 
         ESP_LOGI(kTag, "OTA verified: %u bytes -> %s",
                  static_cast<unsigned>(written), update_partition->label);
 
         httpd_resp_set_type(req, "application/json");
-        const esp_err_t response = httpd_resp_sendstr(req, json);
-        xTaskCreate(reboot_after_ota, "deos-ota-reboot", 2048, nullptr, 5, nullptr);
-        return response;
+        return httpd_resp_sendstr(req, json);
     }
 
     esp_err_t register_endpoint() {
