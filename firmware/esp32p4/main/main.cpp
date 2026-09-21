@@ -107,10 +107,22 @@ extern "C" void app_main(void) {
             {"storage.sd.state", "SD card state", "Storage/sd", ""},
             std::string("unknown"));
         (void)entities.register_entity(
+            {"storage.sd.total_bytes", "SD total bytes", "Storage/sd", "B"},
+            static_cast<std::int64_t>(0));
+        (void)entities.register_entity(
+            {"storage.sd.free_bytes", "SD free bytes", "Storage/sd", "B"},
+            static_cast<std::int64_t>(0));
+        (void)entities.register_entity(
             {"network.connected", "Network connected", "Network/wifi", ""},
             false);
         (void)entities.register_entity(
             {"network.ip", "Network address", "Network/wifi", ""},
+            std::string(""));
+        (void)entities.register_entity(
+            {"network.mode", "Network mode", "Network/wifi", ""},
+            std::string("offline"));
+        (void)entities.register_entity(
+            {"network.ssid", "Network SSID", "Network/wifi", ""},
             std::string(""));
     }
 
