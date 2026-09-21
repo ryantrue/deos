@@ -8,6 +8,7 @@ idf_component_register(
         "resource_runtime.cpp"
         "shell_controller.cpp"
         "storage_controller.cpp"
+        "telemetry_service.cpp"
         "touch_controller.cpp"
         "ui_runtime.cpp"
         "ui_shell.cpp"
