@@ -32,7 +32,7 @@ Read-only status does not require a token:
 GET /api/v1/status
 ```
 
-State-changing developer endpoints require:
+Typed state/action introspection and state-changing developer endpoints require:
 
 ```http
 X-DEOS-Token: <token>
@@ -42,9 +42,24 @@ Current endpoints:
 
 ```text
 GET  /api/v1/status
+GET  /api/v1/entities
+GET  /api/v1/actions
+POST /api/v1/action
 POST /api/v1/reboot
 POST /api/v1/ota
 ```
+
+The generic action endpoint uses the same `ActionRegistry` as the local UI. A remote request cannot bypass action capability checks.
+
+Developer LAN requests currently receive only these capabilities:
+
+```text
+display.control
+storage.control
+network.control
+```
+
+`storage.destructive` is deliberately **not** granted to the remote API. SD formatting therefore remains an on-device, explicitly confirmed action in this profile.
 
 ## deosctl
 
@@ -65,11 +80,33 @@ For authenticated operations:
 ```bash
 export DEOS_TOKEN='<token from the device>'
 
+python3 tools/deosctl/deosctl.py entities
+python3 tools/deosctl/deosctl.py actions
+
+python3 tools/deosctl/deosctl.py invoke display.brightness.set --arg value=65
+
 python3 tools/deosctl/deosctl.py reboot
 python3 tools/deosctl/deosctl.py ota firmware/esp32p4/build/deos_esp32p4.bin
 ```
 
 The token can also be passed with `--token`.
+
+Examples:
+
+```bash
+# Typed state
+python3 tools/deosctl/deosctl.py entities
+
+# Discover callable actions/capabilities
+python3 tools/deosctl/deosctl.py actions
+
+# Safe system mutation through the same ActionRegistry used by the UI
+python3 tools/deosctl/deosctl.py invoke display.brightness.set --arg value=72
+
+# This is intentionally denied remotely because the developer LAN actor
+# does not have storage.destructive.
+python3 tools/deosctl/deosctl.py invoke storage.sd.format
+```
 
 ## A/B application update
 
