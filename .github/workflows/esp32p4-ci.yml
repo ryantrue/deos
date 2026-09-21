@@ -62,6 +62,7 @@ jobs:
           display="$firmware/display_controller.cpp"
           touch="$firmware/touch_controller.cpp"
           shell="$firmware/ui_shell.cpp"
+          widgets="$firmware/ui_widgets.cpp"
 
           grep -Fq 'dpi.num_fbs = 2;' "$display"
           grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
@@ -71,8 +72,9 @@ jobs:
           grep -Fq 'data->point.x = self->last_x;' "$touch"
           grep -Fq 'data->point.y = self->last_y;' "$touch"
 
-          ! grep -Fq 'make_label(screen, "DEOS"' "$shell"
+          ! grep -Fq 'label(screen, "DEOS"' "$shell"
           grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$shell"
+          grep -Fq 'lv_obj_set_style_transform_scale' "$widgets"
           grep -Fq '"screen: %s"' "$shell"
 
       - name: Collect flash package
