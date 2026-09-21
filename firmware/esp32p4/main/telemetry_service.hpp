@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <atomic>
 namespace deos::platform {
 
 class TelemetryService final {
@@ -26,7 +27,7 @@ private:
 
     EntityRegistry& entities_;
     TaskHandle_t task_{nullptr};
-    bool running_{false};
+    std::atomic_bool running_{false};
 };
 
 }  // namespace deos::platform
