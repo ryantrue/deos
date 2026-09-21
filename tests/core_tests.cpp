@@ -1,6 +1,8 @@
+#include "deos/core/action.hpp"
 #include "deos/core/controller.hpp"
 #include "deos/core/event_bus.hpp"
 #include "deos/core/reconciler.hpp"
+#include "deos/core/state.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -109,6 +111,34 @@ void test_dependencies_are_event_driven() {
     assert(engine.actual().at({"AIProvider", "qwen"}).status.phase == deos::Phase::Ready);
 }
 
+void test_update_reconciles_dependents() {
+    deos::Reconciler engine;
+    auto display = std::make_shared<TestController>("Display");
+    auto shell = std::make_shared<TestController>("Shell");
+    engine.register_controller(display);
+    engine.register_controller(shell);
+
+    deos::ResourceMap desired;
+    desired[{"Display", "primary"}] = {
+        {"Display", "primary"}, {{"brightness", "50"}}, {}};
+    desired[{"Shell", "home"}] = {
+        {"Shell", "home"}, {{"layout", "tiles"}}, {{"Display", "primary"}}};
+
+    engine.apply(desired);
+    engine.run_until_idle();
+
+    assert(display->reconcile_count == 1);
+    assert(shell->reconcile_count == 1);
+
+    desired.at({"Display", "primary"}).spec["brightness"] = "80";
+    engine.apply(desired);
+    engine.run_until_idle();
+
+    assert(display->reconcile_count == 2);
+    assert(shell->reconcile_count == 2);
+    assert(engine.actual().at({"Shell", "home"}).status.phase == deos::Phase::Ready);
+}
+
 void test_unknown_controller_is_visible_error() {
     deos::Reconciler engine;
     deos::ResourceMap desired;
@@ -143,6 +173,139 @@ void test_hundred_resource_dependency_chain() {
     }
 }
 
+void test_entity_registry_type_safety_and_events() {
+    deos::EventBus bus;
+    int changed = 0;
+    bus.subscribe("state.changed", [&](const deos::Event& event) {
+        assert(event.data.at("id") == "room.temperature");
+        assert(event.data.at("value") == "23.25");
+        assert(event.data.at("revision") == "2");
+        ++changed;
+    });
+
+    deos::EntityRegistry entities(&bus);
+    assert(entities.register_entity(
+        {"room.temperature", "Room temperature", "local.sensor", "C"},
+        22.5));
+    assert(!entities.register_entity(
+        {"room.temperature", "Duplicate", "test", "C"},
+        20.0));
+    assert(entities.size() == 1);
+
+    const auto initial = entities.get("room.temperature");
+    assert(initial.has_value());
+    assert(initial->revision == 1);
+    assert(deos::state_value_type(initial->value) == deos::StateValueType::Number);
+    assert(deos::to_string(initial->value) == "22.5");
+
+    assert(entities.set("room.temperature", 23.25));
+    assert(changed == 1);
+
+    const auto updated = entities.get("room.temperature");
+    assert(updated.has_value());
+    assert(updated->revision == 2);
+    assert(std::get<double>(updated->value) == 23.25);
+
+    // Entity type is stable after registration.
+    assert(!entities.set("room.temperature", std::string("hot")));
+    assert(entities.get("room.temperature")->revision == 2);
+
+    assert(entities.unregister_entity("room.temperature"));
+    assert(!entities.get("room.temperature").has_value());
+    assert(entities.size() == 0);
+}
+
+void test_action_registry_invocation_and_capability() {
+    deos::EventBus bus;
+    int invoked = 0;
+    int failed = 0;
+    int unknown_events = 0;
+    bus.subscribe("action.invoked", [&](const deos::Event& event) {
+        if (event.data.at("id") == "unknown.action") {
+            ++unknown_events;
+            return;
+        }
+        assert(event.data.at("id") == "display.brightness.set");
+        ++invoked;
+        if (event.data.at("ok") == "false") {
+            ++failed;
+        }
+    });
+
+    deos::ActionRegistry actions(&bus);
+    int applied = 0;
+    assert(actions.register_action(
+        {
+            "display.brightness.set",
+            "Set brightness",
+            "Change display backlight percentage",
+            "display.control",
+            {"value"},
+        },
+        [&](const deos::StateValues& args) -> deos::ActionResult {
+            const auto it = args.find("value");
+            if (it == args.end()) {
+                return {false, "missing value", {}};
+            }
+            const auto* value = std::get_if<std::int64_t>(&it->second);
+            if (value == nullptr || *value < 10 || *value > 100) {
+                return {false, "invalid value", {}};
+            }
+            applied = static_cast<int>(*value);
+            return {true, "brightness updated", {{"value", *value}}};
+        }));
+
+    assert(actions.size() == 1);
+    const auto descriptor = actions.describe("display.brightness.set");
+    assert(descriptor.has_value());
+    assert(descriptor->capability == "display.control");
+    assert(descriptor->parameters.size() == 1);
+
+    const deos::ActionContext untrusted{"ai.qwen", {}};
+    const auto denied = actions.invoke(
+        "display.brightness.set",
+        untrusted,
+        {{"value", static_cast<std::int64_t>(64)}});
+    assert(!denied.ok);
+    assert(applied == 0);
+    assert(invoked == 1);
+    assert(failed == 1);
+
+    const deos::ActionContext shell{"shell", {"display.control"}};
+    const auto result = actions.invoke(
+        "display.brightness.set",
+        shell,
+        {{"value", static_cast<std::int64_t>(64)}});
+    assert(result.ok);
+    assert(applied == 64);
+    assert(invoked == 2);
+    assert(failed == 1);
+
+    const auto invalid = actions.invoke(
+        "display.brightness.set",
+        shell,
+        {{"value", std::string("64")}});
+    assert(!invalid.ok);
+    assert(invoked == 3);
+    assert(failed == 2);
+
+    const deos::ActionContext system{"system", {"*"}};
+    const auto wildcard = actions.invoke(
+        "display.brightness.set",
+        system,
+        {{"value", static_cast<std::int64_t>(70)}});
+    assert(wildcard.ok);
+    assert(applied == 70);
+    assert(invoked == 4);
+
+    const auto unknown = actions.invoke("unknown.action", shell);
+    assert(!unknown.ok);
+    assert(unknown_events == 1);
+
+    assert(actions.unregister_action("display.brightness.set"));
+    assert(actions.size() == 0);
+}
+
 void test_event_bus() {
     deos::EventBus bus;
     int count = 0;
@@ -160,8 +323,11 @@ int main() {
     test_plan_and_idempotency();
     test_update_and_delete();
     test_dependencies_are_event_driven();
+    test_update_reconciles_dependents();
     test_unknown_controller_is_visible_error();
     test_hundred_resource_dependency_chain();
+    test_entity_registry_type_safety_and_events();
+    test_action_registry_invocation_and_capability();
     test_event_bus();
     std::cout << "All DEOS core tests passed.\n";
     return 0;

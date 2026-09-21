@@ -8,12 +8,12 @@
 
 namespace deos::platform {
 
-class DevicePreferences;
+class NetworkController;
 
-class DisplayController final : public Controller {
+class UpdateController final : public Controller {
 public:
-    explicit DisplayController(DevicePreferences& preferences);
-    ~DisplayController() override;
+    explicit UpdateController(NetworkController& network);
+    ~UpdateController() override;
 
     bool supports(std::string_view kind) const override;
     ResourceStatus reconcile(const Resource& desired,
@@ -21,7 +21,6 @@ public:
     ResourceStatus remove(const AppliedResource& current) override;
 
 private:
-    DevicePreferences& preferences_;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

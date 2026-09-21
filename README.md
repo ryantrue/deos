@@ -43,18 +43,36 @@ Not everything is a Resource. This boundary is intentional.
 
 ## Prototype status
 
-The repository currently contains a host-buildable proof of concept of the architectural core:
+The project now has two working layers.
+
+### Portable core
 
 - deterministic `CREATE / UPDATE / DELETE` planning;
 - idempotent `apply`;
 - event-driven reconciliation queue;
-- resource dependencies;
+- resource dependencies and dependent re-reconciliation;
 - explicit status (`Pending / Waiting / Ready / Error`);
 - event bus;
-- zero-dependency `deosctl` prototype for manifest validation and planning;
-- ESP-IDF 6.1 bootstrap layout for the first ESP32-P4 target.
+- host tests;
+- zero-dependency `deosctl`.
 
-The host prototype is deliberately small so we can measure whether this architecture stays understandable before adding GUI, networking and drivers.
+### ESP32-P4 milestone
+
+The reference firmware currently includes:
+
+- 720x720 ST7703 MIPI-DSI display + LVGL 9.5;
+- GT911 touch input;
+- adaptive tile Home and system navigation;
+- Network, Display, Storage, System and Developer surfaces;
+- runtime desired-state mutation through the same Reconciler used at boot;
+- persistent display preferences in NVS;
+- safe SD-card classification, initialization, rescan and explicit formatting;
+- ESP32-C6 networking through ESP-Hosted / Wi-Fi Remote;
+- on-device Wi-Fi configuration and `deos.local`;
+- remote status, reboot and application OTA through `deosctl`;
+- 32 MB A/B application layout with rollback.
+
+CI validates the host core and ESP-IDF 6.1 build. Hardware validation remains mandatory before feature branches are merged.
 
 ## Try the architecture on a desktop
 
@@ -98,15 +116,21 @@ tools/deosctl/       developer control-plane CLI prototype
 ## Roadmap
 
 - `P0` — host core: plan/apply/reconcile/dependencies/tests ✅
-- `P1` — run the same core under ESP-IDF 6.1 on ESP32-P4
-- `P2` — first real controllers: Display, Storage, Network
-- `P3` — resource-backed LVGL shell and settings
-- `P4` — SD provisioning and declarative dashboard
-- `P5` — local OpenAI-compatible/Qwen provider + action registry
-- `P6` — automations generated from typed resources
-- `P7` — package/application model only after the control plane proves stable
+- `P1` — same core under ESP-IDF 6.1 on ESP32-P4 ✅
+- `P2` — Display / Touch / Storage / Network controllers — implemented, hardware validation in progress
+- `P3` — resource-backed interactive LVGL shell and runtime settings — implemented, hardware validation in progress
+- `P4` — safe SD provisioning + remote control + A/B OTA — implemented, hardware validation in progress
+- `P5` — typed State + Actions registry and local OpenAI-compatible/Qwen provider
+- `P6` — local automation engine over the same Action registry
+- `P7` — installable package/application model after the control plane proves stable
 
-See [docs/PRODUCT.md](docs/PRODUCT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Product and engineering references:
+
+- [Product definition](docs/PRODUCT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [UX model](docs/UX.md)
+- [Storage / SD policy](docs/STORAGE.md)
+- [Remote control and OTA](docs/REMOTE_CONTROL.md)
 
 ## License
 

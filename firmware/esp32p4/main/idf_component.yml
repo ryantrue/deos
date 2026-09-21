@@ -1,3 +1,8 @@
 dependencies:
   lvgl/lvgl: "==9.5.0"
   waveshare/esp_lcd_st7703: "==2.0.0"
+  espressif/esp_lcd_touch_gt911: "==1.2.1"
+  espressif/esp_wifi_remote: "==1.6.4"
+  espressif/esp_hosted: "==2.12.13"
+  espressif/mdns: "==1.13.1"
+  espressif/cjson: "==1.7.19~2"

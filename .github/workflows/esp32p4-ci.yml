@@ -14,6 +14,11 @@ on:
       - "boards/waveshare-esp32-p4-wifi6-touch-lcd-4b/**"
       - ".github/workflows/esp32p4-ci.yml"
 
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,41 +34,115 @@ jobs:
           path: firmware/esp32p4
           command: idf.py build
 
+      - name: Verify hardware-critical runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="firmware/esp32p4/sdkconfig"
+          grep -qx 'CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y' "$config"
+          grep -qx 'CONFIG_FREERTOS_HZ=1000' "$config"
+          grep -qx 'CONFIG_COMPILER_OPTIMIZATION_PERF=y' "$config"
+          grep -qx 'CONFIG_LV_OS_FREERTOS=y' "$config"
+          grep -qx 'CONFIG_LV_DRAW_THREAD_PRIO=2' "$config"
+
+      - name: Verify local-only configuration policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          firmware="firmware/esp32p4/main"
+          ! grep -R -E 'WIFI_MODE_AP|WIFI_IF_AP|create_default_wifi_ap|DEOS-SETUP' "$firmware"
+          ! grep -R -F 'uri = "/setup"' "$firmware"
+          grep -Fq 'impl_->go_home();' "$firmware/ui_shell.cpp"
+
+      - name: Verify display, touch and shell integration policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          firmware="firmware/esp32p4/main"
+          display="$firmware/display_controller.cpp"
+          touch="$firmware/touch_controller.cpp"
+          shell="$firmware/ui_shell.cpp"
+
+          grep -Fq 'dpi.num_fbs = 2;' "$display"
+          grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
+          grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
+          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
+
+          grep -Fq 'data->point.x = self->last_x;' "$touch"
+          grep -Fq 'data->point.y = self->last_y;' "$touch"
+
+          ! grep -Fq 'make_label(screen, "DEOS"' "$shell"
+          grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$shell"
+          grep -Fq '"screen: %s"' "$shell"
+
       - name: Collect flash package
         shell: bash
+        env:
+          DEOS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           package="firmware/esp32p4/artifact"
           build="firmware/esp32p4/build"
 
           test -s "$build/deos_esp32p4.bin"
-          test -s "$build/bootloader/bootloader.bin"
-          test -s "$build/partition_table/partition-table.bin"
           test -s "$build/flash_args"
           test -s "$build/flasher_args.json"
 
           rm -rf "$package"
-          mkdir -p "$package/bootloader" "$package/partition_table"
+          mkdir -p "$package"
 
-          cp "$build/deos_esp32p4.bin" "$package/"
-          cp "$build/bootloader/bootloader.bin" "$package/bootloader/"
-          cp "$build/partition_table/partition-table.bin" "$package/partition_table/"
-          cp "$build/flash_args" "$package/"
-          cp "$build/flasher_args.json" "$package/"
+          BUILD_DIR="$build" PACKAGE_DIR="$package" python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shutil
+
+          build = pathlib.Path(os.environ["BUILD_DIR"])
+          package = pathlib.Path(os.environ["PACKAGE_DIR"])
+          args = json.loads((build / "flasher_args.json").read_text())
+
+          flash_files = args.get("flash_files", {})
+          if not flash_files:
+              raise SystemExit("flasher_args.json has no flash_files")
+
+          for offset, relative in flash_files.items():
+              src = build / relative
+              if not src.is_file() or src.stat().st_size == 0:
+                  raise SystemExit(f"missing flash image {relative} for {offset}")
+              dst = package / relative
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              print(f"{offset}: {relative} ({src.stat().st_size} bytes)")
+
+          shutil.copy2(build / "flash_args", package / "flash_args")
+          shutil.copy2(build / "flasher_args.json", package / "flasher_args.json")
+          PY
+
+          cp "firmware/esp32p4/partitions.csv" "$package/partitions.csv"
+          cp "firmware/esp32p4/sdkconfig" "$package/sdkconfig"
+          cp "$build/deos_esp32p4.elf" "$package/deos_esp32p4.elf"
+          cp "$build/deos_esp32p4.map" "$package/deos_esp32p4.map"
 
           {
             echo "DEOS ESP32-P4 CI flash package"
-            echo "commit=$GITHUB_SHA"
+            echo "source_commit=$DEOS_SOURCE_SHA"
+            echo "tested_commit=$GITHUB_SHA"
             echo "idf=6.1"
             echo "target=esp32p4"
+            echo "optimization=performance"
             echo
-            echo "Flash from this directory with ESP-IDF 6.1 active:"
-            echo 'python -m esptool --chip esp32p4 -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"'
+            echo "First migration to the A/B layout:"
+            echo 'python -m esptool --chip esp32p4 -p "$PORT" erase-flash'
+            echo 'python -m esptool --chip esp32p4 -p "$PORT" -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"'
+            echo
+            echo "Later OTA updates upload only deos_esp32p4.bin."
           } > "$package/BUILD_INFO.txt"
 
           (
             cd "$package"
-            sha256sum               deos_esp32p4.bin               bootloader/bootloader.bin               partition_table/partition-table.bin               flash_args               flasher_args.json > SHA256SUMS
+            find . -type f ! -name SHA256SUMS -print0 |
+              sort -z |
+              xargs -0 shasum -a 256 > SHA256SUMS
           )
 
       - name: Upload ESP32-P4 flash package

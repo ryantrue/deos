@@ -2,158 +2,2190 @@
 
 #include "ui_shell.hpp"
 
+#include "device_preferences.hpp"
+#include "network_controller.hpp"
+#include "resource_runtime.hpp"
+#include "storage_controller.hpp"
+
+#include "esp_app_desc.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lvgl.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <cstdio>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 namespace deos::ui {
 namespace {
 
 constexpr int kScreen = 720;
 constexpr int kMargin = 24;
 constexpr int kGap = 12;
-constexpr int kColumn = 216;
-constexpr int kTileHeight = 150;
-constexpr int kWide = kColumn * 2 + kGap;
+constexpr int kHeaderHeight = 104;
+constexpr int kTileHeight = 146;
+constexpr int kRadius = 24;
 
 lv_color_t color(uint32_t rgb) {
     return lv_color_hex(rgb);
 }
 
-lv_obj_t* label(lv_obj_t* parent,
-                const char* text,
-                int x,
-                int y,
-                lv_color_t text_color,
-                const lv_font_t* font = LV_FONT_DEFAULT) {
+lv_obj_t* make_label(lv_obj_t* parent,
+                     const char* text,
+                     lv_color_t text_color,
+                     const lv_font_t* font = LV_FONT_DEFAULT) {
     lv_obj_t* obj = lv_label_create(parent);
     lv_label_set_text(obj, text);
-    lv_obj_set_pos(obj, x, y);
     lv_obj_set_style_text_color(obj, text_color, 0);
     lv_obj_set_style_text_font(obj, font, 0);
     return obj;
 }
 
-lv_obj_t* tile(lv_obj_t* parent,
-               int x,
-               int y,
-               int width,
-               lv_color_t bg,
-               lv_color_t border = color(0x2A3039)) {
-    lv_obj_t* obj = lv_obj_create(parent);
-    lv_obj_set_pos(obj, x, y);
-    lv_obj_set_size(obj, width, kTileHeight);
-    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+void set_panel_style(lv_obj_t* obj,
+                     lv_color_t bg = color(0x15191F),
+                     lv_color_t border = color(0x292F38)) {
     lv_obj_set_style_bg_color(obj, bg, 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(obj, 1, 0);
     lv_obj_set_style_border_color(obj, border, 0);
-    lv_obj_set_style_radius(obj, 26, 0);
+    lv_obj_set_style_radius(obj, kRadius, 0);
     lv_obj_set_style_pad_all(obj, 18, 0);
-    return obj;
 }
 
-void tile_heading(lv_obj_t* obj, const char* name, const char* state) {
-    label(obj, name, 0, 0, color(0xF5F7FA), &lv_font_montserrat_20);
-    label(obj, state, 0, 34, color(0xB3BECA));
-}
-
-void status_pill(lv_obj_t* parent,
-                 const char* text,
-                 int x,
-                 lv_color_t bg,
-                 lv_color_t fg) {
-    lv_obj_t* pill = lv_obj_create(parent);
-    lv_obj_set_pos(pill, x, 9);
-    lv_obj_set_size(pill, 112, 34);
-    lv_obj_remove_flag(pill, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(pill, bg, 0);
-    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(pill, 0, 0);
-    lv_obj_set_style_radius(pill, 17, 0);
-    lv_obj_set_style_pad_all(pill, 0, 0);
-
-    lv_obj_t* text_obj = label(pill, text, 0, 0, fg);
-    lv_obj_center(text_obj);
+std::string bytes_human(uint64_t bytes) {
+    char buffer[32]{};
+    const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (mib >= 1024.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.1f GB", mib / 1024.0);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.0f MB", mib);
+    }
+    return buffer;
 }
 
 }  // namespace
 
-void create_home_shell(lv_display_t* display) {
-    lv_display_set_default(display);
+struct ShellUi::Impl {
+    enum class ScreenId {
+        FirstRunWelcome,
+        FirstRunNetwork,
+        FirstRunStorage,
+        FirstRunReady,
+        Home,
+        QuickSettings,
+        Settings,
+        Ai,
+        Control,
+        Automations,
+        Apps,
+        System,
+        Display,
+        Update,
+        Developer,
+        Network,
+        WifiScan,
+        WifiCredentials,
+        ForgetWifiConfirm,
+        Storage,
+        FormatConfirm,
+    };
 
-    lv_obj_t* screen = lv_screen_active();
-    lv_obj_clean(screen);
-    lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(screen, kScreen, kScreen);
-    lv_obj_set_style_bg_color(screen, color(0x080A0E), 0);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(screen, 0, 0);
+    static constexpr std::size_t kNavigationDepth = 12;
 
-    // Calm system chrome inspired by mobile OSes; the main surface stays tile-centric.
-    label(screen, "DEOS", kMargin, 16, color(0xF5F7FA), &lv_font_montserrat_20);
-    status_pill(screen, "LOCAL", 584, color(0x14241C), color(0x69D39A));
+    lv_display_t* display{nullptr};
+    EntityRegistry& entities;
+    ActionRegistry& actions;
+    platform::DevicePreferences& preferences;
+    platform::ResourceRuntime& resources;
+    platform::NetworkController& network;
+    platform::StorageController& storage;
+    lv_timer_t* storage_timer{nullptr};
+    lv_timer_t* home_timer{nullptr};
+    lv_timer_t* wifi_scan_timer{nullptr};
+    lv_timer_t* toast_timer{nullptr};
+    lv_obj_t* toast_obj{nullptr};
+    lv_obj_t* storage_body{nullptr};
+    lv_obj_t* wifi_scan_body{nullptr};
+    lv_obj_t* wifi_password_area{nullptr};
+    lv_obj_t* brightness_value_label{nullptr};
+    lv_obj_t* home_system_value_label{nullptr};
+    lv_obj_t* home_storage_value_label{nullptr};
+    lv_obj_t* home_control_value_label{nullptr};
+    lv_obj_t* home_settings_value_label{nullptr};
+    std::string storage_render_key;
+    std::string home_render_key;
+    std::string wifi_scan_render_key;
+    std::string wifi_selected_ssid;
+    std::string wifi_join_error;
+    bool wifi_selected_secured{false};
+    bool onboarding_wifi_flow{false};
+    std::vector<platform::WifiScanEntry> wifi_scan_entries;
+    int developer_taps{0};
+    bool developer_mode{false};
+    ScreenId current_screen{ScreenId::Home};
+    std::array<ScreenId, kNavigationDepth> navigation_stack{};
+    std::size_t navigation_depth{0};
 
-    label(screen, "Home", kMargin, 55, color(0xF5F7FA), &lv_font_montserrat_28);
-    label(screen, "Your device, services and intelligence", kMargin, 88, color(0x75808D));
+    Impl(lv_display_t* display_handle,
+         EntityRegistry& entity_registry,
+         ActionRegistry& action_registry,
+         platform::DevicePreferences& device_preferences,
+         platform::ResourceRuntime& resource_runtime,
+         platform::NetworkController& network_controller,
+         platform::StorageController& storage_controller)
+        : display(display_handle),
+          entities(entity_registry),
+          actions(action_registry),
+          preferences(device_preferences),
+          resources(resource_runtime),
+          network(network_controller),
+          storage(storage_controller),
+          developer_mode(device_preferences.developer_mode()) {}
 
-    // Row 1: optional intelligence + device state.
-    lv_obj_t* ai = tile(screen, kMargin, 120, kWide, color(0x14243B), color(0x285887));
-    tile_heading(ai, "AI", "Optional model bridge");
-    label(ai, "Connect Qwen or any compatible endpoint", 0, 78, color(0xC9D8EA));
-    label(ai, "OS works without it", 0, 108, color(0x68A9EA));
+    ~Impl() {
+        stop_storage_timer();
+    }
 
-    lv_obj_t* system = tile(screen, 480, 120, kColumn, color(0x171B21));
-    tile_heading(system, "System", "READY");
-    label(system, "P4", 0, 77, color(0xF5F7FA), &lv_font_montserrat_28);
-    label(system, "32 MB PSRAM", 0, 112, color(0x7E8996));
+    static const char* screen_name(ScreenId screen) {
+        switch (screen) {
+            case ScreenId::FirstRunWelcome: return "FirstRunWelcome";
+            case ScreenId::FirstRunNetwork: return "FirstRunNetwork";
+            case ScreenId::FirstRunStorage: return "FirstRunStorage";
+            case ScreenId::FirstRunReady: return "FirstRunReady";
+            case ScreenId::Home: return "Home";
+            case ScreenId::QuickSettings: return "QuickSettings";
+            case ScreenId::Settings: return "Settings";
+            case ScreenId::Ai: return "AI";
+            case ScreenId::Control: return "Control";
+            case ScreenId::Automations: return "Automations";
+            case ScreenId::Apps: return "Apps";
+            case ScreenId::System: return "System";
+            case ScreenId::Display: return "Display";
+            case ScreenId::Update: return "Update";
+            case ScreenId::Developer: return "Developer";
+            case ScreenId::Network: return "Network";
+            case ScreenId::WifiScan: return "WifiScan";
+            case ScreenId::WifiCredentials: return "WifiCredentials";
+            case ScreenId::ForgetWifiConfirm: return "ForgetWifiConfirm";
+            case ScreenId::Storage: return "Storage";
+            case ScreenId::FormatConfirm: return "FormatConfirm";
+        }
+        return "Unknown";
+    }
 
-    // Row 2: the OS is useful even with no AI provider configured.
-    lv_obj_t* control = tile(screen, kMargin, 282, kColumn, color(0x17251F), color(0x28573F));
-    tile_heading(control, "Control", "Local-first");
-    label(control, "Entities", 0, 78, color(0x9EE2BB));
-    label(control, "0 connected", 0, 108, color(0x6C9F80));
+    void stop_storage_timer() {
+        if (storage_timer != nullptr) {
+            lv_timer_delete(storage_timer);
+            storage_timer = nullptr;
+        }
+        if (home_timer != nullptr) {
+            lv_timer_delete(home_timer);
+            home_timer = nullptr;
+        }
+        if (wifi_scan_timer != nullptr) {
+            lv_timer_delete(wifi_scan_timer);
+            wifi_scan_timer = nullptr;
+        }
+        if (toast_timer != nullptr) {
+            lv_timer_delete(toast_timer);
+            toast_timer = nullptr;
+        }
+        toast_obj = nullptr;
+        storage_body = nullptr;
+        wifi_scan_body = nullptr;
+        wifi_password_area = nullptr;
+        brightness_value_label = nullptr;
+        home_system_value_label = nullptr;
+        home_storage_value_label = nullptr;
+        home_control_value_label = nullptr;
+        home_settings_value_label = nullptr;
+        storage_render_key.clear();
+        home_render_key.clear();
+        wifi_scan_render_key.clear();
+    }
 
-    lv_obj_t* automations = tile(screen, 252, 282, kColumn, color(0x261E31), color(0x573A6E));
-    tile_heading(automations, "Automations", "On-device");
-    label(automations, "Rules", 0, 78, color(0xD8B4EF));
-    label(automations, "0 active", 0, 108, color(0x9778AA));
+    lv_obj_t* begin_screen(const char* title, bool show_back) {
+        stop_storage_timer();
+        brightness_value_label = nullptr;
+        lv_display_set_default(display);
 
-    lv_obj_t* files = tile(screen, 480, 282, kColumn, color(0x202117), color(0x55562A));
-    tile_heading(files, "Files", "Storage");
-    label(files, "Internal", 0, 78, color(0xE0D98F));
-    label(files, "SD optional", 0, 108, color(0x9C9869));
+        lv_obj_t* screen = lv_screen_active();
+        lv_obj_clean(screen);
+        lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(screen, kScreen, kScreen);
+        lv_obj_set_style_bg_color(screen, color(0x080A0E), 0);
+        lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(screen, 0, 0);
 
-    // Row 3: app surface and system configuration.
-    lv_obj_t* apps = tile(screen, kMargin, 444, kColumn, color(0x1D1C1B));
-    tile_heading(apps, "Apps", "Built-in");
-    label(apps, "6", 0, 73, color(0xF5F7FA), &lv_font_montserrat_28);
-    label(apps, "more later", 0, 110, color(0x7E8996));
+        if (show_back) {
+            lv_obj_t* back = lv_button_create(screen);
+            lv_obj_set_pos(back, kMargin, 18);
+            lv_obj_set_size(back, 76, 52);
+            lv_obj_set_style_radius(back, 20, 0);
+            lv_obj_set_style_bg_color(back, color(0x171C23), 0);
+            lv_obj_set_style_border_width(back, 1, 0);
+            lv_obj_set_style_border_color(back, color(0x2A313A), 0);
+            lv_obj_add_event_cb(back, on_back, LV_EVENT_CLICKED, this);
 
-    lv_obj_t* settings = tile(screen, 252, 444, kWide, color(0x171B21));
-    tile_heading(settings, "Settings", "Device control");
-    label(settings, "Network  ·  Display  ·  Storage  ·  Developer", 0, 80, color(0xC4CCD6));
-    label(settings, "Everything remains locally configurable", 0, 110, color(0x75808D));
+            lv_obj_t* arrow = make_label(back, "<", color(0xF5F7FA), &lv_font_montserrat_28);
+            lv_obj_center(arrow);
+        }
 
-    // A restrained mobile-style dock. It becomes interactive when Input/touch lands.
-    lv_obj_t* dock = lv_obj_create(screen);
-    lv_obj_set_pos(dock, kMargin, 616);
-    lv_obj_set_size(dock, 672, 76);
-    lv_obj_remove_flag(dock, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(dock, color(0x11151B), 0);
-    lv_obj_set_style_bg_opa(dock, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(dock, 1, 0);
-    lv_obj_set_style_border_color(dock, color(0x252B34), 0);
-    lv_obj_set_style_radius(dock, 30, 0);
+        lv_obj_t* heading = make_label(screen, title, color(0xF5F7FA), &lv_font_montserrat_28);
+        lv_obj_set_pos(heading, show_back ? 120 : kMargin, 23);
 
-    label(dock, "HOME", 34, 27, color(0xF5F7FA));
-    label(dock, "SEARCH", 185, 27, color(0x7D8895));
-    label(dock, "AI", 374, 27, color(0x7D8895));
-    label(dock, "APPS", 521, 27, color(0x7D8895));
+        const platform::NetworkSnapshot net = network.snapshot();
+        const char* status_text =
+            net.connected ? "ONLINE" : "OFFLINE";
+        const lv_color_t status_bg =
+            net.connected ? color(0x14241C) : color(0x18202A);
+        const lv_color_t status_fg =
+            net.connected ? color(0x69D39A) : color(0x8DA3B8);
 
-    lv_obj_t* indicator = lv_obj_create(screen);
-    lv_obj_set_pos(indicator, 306, 706);
-    lv_obj_set_size(indicator, 108, 5);
-    lv_obj_set_style_bg_color(indicator, color(0xD4D8DD), 0);
-    lv_obj_set_style_bg_opa(indicator, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(indicator, 0, 0);
-    lv_obj_set_style_radius(indicator, 3, 0);
+        lv_obj_t* local = lv_button_create(screen);
+        lv_obj_set_pos(local, 582, 18);
+        lv_obj_set_size(local, 114, 42);
+        lv_obj_set_style_bg_color(local, status_bg, 0);
+        lv_obj_set_style_bg_opa(local, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(local, 0, 0);
+        lv_obj_set_style_radius(local, 21, 0);
+        lv_obj_set_style_shadow_width(local, 0, 0);
+        lv_obj_set_style_pad_all(local, 0, 0);
+        lv_obj_set_style_transform_scale(local, 248, LV_STATE_PRESSED);
+        lv_obj_add_event_cb(local, on_quick_settings, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* local_text = make_label(local, status_text, status_fg);
+        lv_obj_center(local_text);
+
+        return screen;
+    }
+
+    lv_obj_t* make_tile(lv_obj_t* parent,
+                        int x,
+                        int y,
+                        int width,
+                        const char* title,
+                        const char* subtitle,
+                        lv_color_t bg,
+                        lv_color_t border) {
+        lv_obj_t* tile = lv_button_create(parent);
+        lv_obj_set_pos(tile, x, y);
+        lv_obj_set_size(tile, width, kTileHeight);
+        set_panel_style(tile, bg, border);
+        lv_obj_set_style_shadow_width(tile, 0, 0);
+        lv_obj_set_style_transform_scale(tile, 248, LV_STATE_PRESSED);
+
+        lv_obj_t* title_label = make_label(tile, title, color(0xF5F7FA), &lv_font_montserrat_20);
+        lv_obj_set_pos(title_label, 0, 0);
+
+        lv_obj_t* subtitle_label = make_label(tile, subtitle, color(0x8E99A6));
+        lv_obj_set_pos(subtitle_label, 0, 36);
+        return tile;
+    }
+
+    lv_obj_t* make_row(lv_obj_t* parent,
+                       const char* title,
+                       const char* subtitle,
+                       bool enabled = true) {
+        lv_obj_t* row = enabled ? lv_button_create(parent) : lv_obj_create(parent);
+        lv_obj_set_width(row, 652);
+        lv_obj_set_height(row, 86);
+        set_panel_style(row, color(0x12161C), color(0x262C34));
+        lv_obj_set_style_pad_all(row, 14, 0);
+        if (enabled) {
+            lv_obj_set_style_shadow_width(row, 0, 0);
+            lv_obj_set_style_transform_scale(row, 250, LV_STATE_PRESSED);
+        }
+
+        lv_obj_t* title_label = make_label(
+            row, title, enabled ? color(0xF5F7FA) : color(0x6E7884), &lv_font_montserrat_20);
+        lv_obj_set_pos(title_label, 0, 0);
+
+        lv_obj_t* subtitle_label = make_label(
+            row, subtitle, enabled ? color(0x87929F) : color(0x555E69));
+        lv_obj_set_pos(subtitle_label, 0, 34);
+
+        if (enabled) {
+            lv_obj_t* chevron = make_label(row, ">", color(0x626D79), &lv_font_montserrat_20);
+            lv_obj_align(chevron, LV_ALIGN_RIGHT_MID, 0, 0);
+        }
+        return row;
+    }
+
+    lv_obj_t* make_action(lv_obj_t* parent,
+                          const char* text,
+                          lv_color_t bg,
+                          lv_color_t fg,
+                          int width = 296) {
+        lv_obj_t* button = lv_button_create(parent);
+        lv_obj_set_size(button, width, 58);
+        lv_obj_set_style_bg_color(button, bg, 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(button, 0, 0);
+        lv_obj_set_style_radius(button, 20, 0);
+        lv_obj_set_style_shadow_width(button, 0, 0);
+        lv_obj_set_style_transform_scale(button, 248, LV_STATE_PRESSED);
+        lv_obj_t* label = make_label(button, text, fg, &lv_font_montserrat_20);
+        lv_obj_center(label);
+        return button;
+    }
+
+    void dismiss_toast() {
+        if (toast_timer != nullptr) {
+            lv_timer_delete(toast_timer);
+            toast_timer = nullptr;
+        }
+        if (toast_obj != nullptr && lv_obj_is_valid(toast_obj)) {
+            lv_obj_delete(toast_obj);
+        }
+        toast_obj = nullptr;
+    }
+
+    void show_toast(const std::string& message, bool success = true) {
+        dismiss_toast();
+
+        lv_obj_t* screen = lv_screen_active();
+        toast_obj = lv_obj_create(screen);
+        lv_obj_set_size(toast_obj, 620, 62);
+        lv_obj_align(toast_obj, LV_ALIGN_BOTTOM_MID, 0, -24);
+        lv_obj_remove_flag(toast_obj, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(
+            toast_obj,
+            success ? color(0x173024) : color(0x3A2023),
+            0);
+        lv_obj_set_style_bg_opa(toast_obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(toast_obj, 1, 0);
+        lv_obj_set_style_border_color(
+            toast_obj,
+            success ? color(0x2D6A4B) : color(0x7A343D),
+            0);
+        lv_obj_set_style_radius(toast_obj, 22, 0);
+        lv_obj_set_style_pad_all(toast_obj, 16, 0);
+
+        lv_obj_t* text = make_label(
+            toast_obj,
+            message.c_str(),
+            success ? color(0xBDE8CF) : color(0xF3BEC3),
+            &lv_font_montserrat_20);
+        lv_obj_center(text);
+
+        lv_obj_move_foreground(toast_obj);
+        lv_obj_fade_in(toast_obj, 90, 0);
+
+        toast_timer = lv_timer_create(on_toast_timer, 1500, this);
+        lv_timer_set_repeat_count(toast_timer, 1);
+    }
+
+    void render_screen(ScreenId screen) {
+        ESP_LOGI("deos-ui", "screen: %s", screen_name(screen));
+        current_screen = screen;
+        switch (screen) {
+            case ScreenId::FirstRunWelcome: show_first_run_welcome(); break;
+            case ScreenId::FirstRunNetwork: show_first_run_network(); break;
+            case ScreenId::FirstRunStorage: show_first_run_storage(); break;
+            case ScreenId::FirstRunReady: show_first_run_done(); break;
+            case ScreenId::Home: show_home(); break;
+            case ScreenId::QuickSettings: show_quick_settings(); break;
+            case ScreenId::Settings: show_settings(); break;
+            case ScreenId::Ai: show_ai(); break;
+            case ScreenId::Control: show_control(); break;
+            case ScreenId::Automations: show_automations(); break;
+            case ScreenId::Apps: show_apps(); break;
+            case ScreenId::System: show_system(); break;
+            case ScreenId::Display: show_display(); break;
+            case ScreenId::Update: show_update(); break;
+            case ScreenId::Developer: show_developer(); break;
+            case ScreenId::Network: show_network(); break;
+            case ScreenId::WifiScan: show_wifi_scan(); break;
+            case ScreenId::WifiCredentials: show_wifi_credentials(); break;
+            case ScreenId::ForgetWifiConfirm: show_forget_wifi_confirm(); break;
+            case ScreenId::Storage: show_storage(); break;
+            case ScreenId::FormatConfirm: show_format_confirm(); break;
+        }
+
+        // Do not animate opacity on the complete 720x720 screen. LVGL renders
+        // an object with style opacity through temporary software layers; on
+        // this surface that turns a navigation transition into a prolonged
+        // full-screen allocation/draw loop. Small overlays (for example the
+        // toast) can still use fades safely.
+    }
+
+    void go_home() {
+        navigation_depth = 0;
+        render_screen(ScreenId::Home);
+    }
+
+    void navigate(ScreenId screen) {
+        if (screen == current_screen) {
+            return;
+        }
+
+        if (navigation_depth < navigation_stack.size()) {
+            navigation_stack[navigation_depth++] = current_screen;
+        } else {
+            // Keep the newest history entries if navigation becomes unexpectedly deep.
+            std::move(
+                navigation_stack.begin() + 1,
+                navigation_stack.end(),
+                navigation_stack.begin());
+            navigation_stack.back() = current_screen;
+        }
+        render_screen(screen);
+    }
+
+    void go_back() {
+        if (navigation_depth == 0) {
+            go_home();
+            return;
+        }
+
+        const ScreenId previous = navigation_stack[--navigation_depth];
+        render_screen(previous);
+    }
+
+    void finish_first_run() {
+        if (!preferences.set_setup_completed(true)) {
+            ESP_LOGW("deos-ui", "could not persist first-run completion");
+        }
+        go_home();
+    }
+
+    void show_first_run_welcome() {
+        lv_obj_t* screen = begin_screen("Welcome", false);
+
+        lv_obj_t* hero = lv_obj_create(screen);
+        lv_obj_set_pos(hero, 24, 120);
+        lv_obj_set_size(hero, 672, 360);
+        set_panel_style(hero, color(0x111A25), color(0x294D73));
+        lv_obj_set_style_pad_all(hero, 30, 0);
+
+        lv_obj_t* title = make_label(
+            hero, "DEOS is ready.", color(0xF5F8FB), &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* body = make_label(
+            hero,
+            "This device works locally first. Network, SD storage and AI are optional.\n\n"
+            "Setup takes only a few steps and never formats removable media automatically.",
+            color(0xAAB6C3));
+        lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(body, 610);
+        lv_obj_set_pos(body, 0, 62);
+
+        lv_obj_t* model = make_label(
+            hero,
+            "Local device  /  Optional network  /  Optional AI  /  Explicit actions",
+            color(0x71A9E8));
+        lv_obj_set_pos(model, 0, 250);
+
+        lv_obj_t* start = make_action(
+            screen, "Start setup", color(0x2B6FC2), color(0xFFFFFF), 420);
+        lv_obj_set_pos(start, 276, 528);
+        lv_obj_add_event_cb(start, on_first_run_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* skip = make_action(
+            screen, "Use now", color(0x20252D), color(0xDCE3EA), 232);
+        lv_obj_set_pos(skip, 24, 528);
+        lv_obj_add_event_cb(skip, on_first_run_finish, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Everything shown here remains available later in Settings.",
+            color(0x66727F));
+        lv_obj_set_pos(note, 24, 618);
+    }
+
+    void show_first_run_network() {
+        lv_obj_t* screen = begin_screen("Network", false);
+        const platform::NetworkSnapshot net = network.snapshot();
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 116);
+        lv_obj_set_size(card, 672, 410);
+        set_panel_style(card, color(0x11151A), color(0x28313B));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        if (!net.initialized) {
+            lv_obj_t* title = make_label(
+                card, "Network service is starting.", color(0xE1C876),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 0);
+
+            lv_obj_t* body = make_label(
+                card,
+                "DEOS does not require Wi-Fi to boot. You can continue now and configure "
+                "networking later from Settings.",
+                color(0x9AA6B3));
+            lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(body, 610);
+            lv_obj_set_pos(body, 0, 70);
+        } else if (net.provisioning) {
+            lv_obj_t* title = make_label(
+                card, "Connect DEOS to Wi-Fi", color(0xF2F5F8),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 0);
+
+            lv_obj_t* intro = make_label(
+                card,
+                "From a phone or computer, join:",
+                color(0x8F9BA8));
+            lv_obj_set_pos(intro, 0, 62);
+
+            lv_obj_t* ssid = make_label(
+                card, net.setup_ssid.c_str(), color(0x73AFFF),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(ssid, 0, 102);
+
+            const std::string pass = "Password: " + net.setup_password;
+            lv_obj_t* password = make_label(card, pass.c_str(), color(0xD7DEE7));
+            lv_obj_set_pos(password, 0, 154);
+
+            lv_obj_t* steps = make_label(
+                card,
+                "Then open http://192.168.4.1/ and enter the Wi-Fi network DEOS should use.\n\n"
+                "The Wi-Fi password is stored only in device NVS.",
+                color(0x8894A1));
+            lv_label_set_long_mode(steps, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(steps, 610);
+            lv_obj_set_pos(steps, 0, 208);
+        } else {
+            lv_obj_t* title = make_label(
+                card,
+                net.connected ? "Network connected" : "Network configured",
+                net.connected ? color(0x74D89F) : color(0xE1C876),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 0);
+
+            const std::string wifi_text =
+                std::string("Wi-Fi:  ") + (net.ssid.empty() ? "configured" : net.ssid);
+            lv_obj_t* wifi = make_label(card, wifi_text.c_str(), color(0xC8D1DA));
+            lv_obj_set_pos(wifi, 0, 78);
+
+            const std::string ip_text =
+                std::string("IP:  ") + (net.ip.empty() ? "waiting for DHCP" : net.ip);
+            lv_obj_t* ip = make_label(card, ip_text.c_str(), color(0xC8D1DA));
+            lv_obj_set_pos(ip, 0, 120);
+
+            lv_obj_t* local_name = make_label(
+                card, "Local name:  deos.local", color(0x8E99A6));
+            lv_obj_set_pos(local_name, 0, 162);
+        }
+
+        if (net.initialized) {
+            lv_obj_t* choose = make_action(
+                screen, "Choose Wi-Fi here", color(0x245BA5), color(0xFFFFFF), 672);
+            lv_obj_set_pos(choose, 24, 536);
+            lv_obj_add_event_cb(
+                choose, on_first_run_wifi_scan, LV_EVENT_CLICKED, this);
+        }
+
+        lv_obj_t* later = make_action(
+            screen, "Skip network", color(0x20252D), color(0xDCE3EA), 232);
+        lv_obj_set_pos(later, 24, 610);
+        lv_obj_add_event_cb(later, on_first_run_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* next = make_action(
+            screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 420);
+        lv_obj_set_pos(next, 276, 610);
+        lv_obj_add_event_cb(next, on_first_run_storage, LV_EVENT_CLICKED, this);
+    }
+
+    void show_first_run_storage() {
+        lv_obj_t* screen = begin_screen("Storage", false);
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 116);
+        lv_obj_set_size(card, 672, 410);
+        set_panel_style(card, color(0x11151A), color(0x353426));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* title = make_label(
+            card,
+            "SD card is optional",
+            color(0xF2F5F8),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        const std::string state_text =
+            std::string("Detected state: ") + platform::to_string(sd.state);
+        lv_obj_t* state = make_label(
+            card,
+            state_text.c_str(),
+            sd.state == platform::SdVolumeState::Ready
+                ? color(0x74D89F)
+                : color(0xD8C576),
+            &lv_font_montserrat_20);
+        lv_obj_set_pos(state, 0, 62);
+
+        lv_obj_t* policy = make_label(
+            card,
+            "DEOS never formats removable media because mounting failed.\n\n"
+            "Readable foreign cards can be left untouched or initialized by creating "
+            "DEOS directories. Unsupported layouts are formatted only after an explicit "
+            "destructive confirmation.",
+            color(0x909CA9));
+        lv_label_set_long_mode(policy, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(policy, 610);
+        lv_obj_set_pos(policy, 0, 112);
+
+        lv_obj_t* review = make_action(
+            card, "Review SD card", color(0x34301D), color(0xE7D88C), 610);
+        lv_obj_set_pos(review, 0, 316);
+        lv_obj_add_event_cb(review, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* next = make_action(
+            screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 672);
+        lv_obj_set_pos(next, 24, 568);
+        lv_obj_add_event_cb(next, on_first_run_done, LV_EVENT_CLICKED, this);
+    }
+
+    void show_first_run_done() {
+        lv_obj_t* screen = begin_screen("Ready", false);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 132);
+        lv_obj_set_size(card, 672, 360);
+        set_panel_style(card, color(0x122018), color(0x285B3E));
+        lv_obj_set_style_pad_all(card, 30, 0);
+
+        lv_obj_t* title = make_label(
+            card,
+            "Your DEOS device is ready.",
+            color(0xF1F8F4),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* body = make_label(
+            card,
+            "Home stays useful without cloud services or AI. Add integrations, models, "
+            "automations and apps as you need them.\n\n"
+            "Network and storage can always be changed from Settings.",
+            color(0xA2B5AA));
+        lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(body, 610);
+        lv_obj_set_pos(body, 0, 72);
+
+        lv_obj_t* home = make_action(
+            screen, "Enter Home", color(0x297B4D), color(0xFFFFFF), 672);
+        lv_obj_set_pos(home, 24, 548);
+        lv_obj_add_event_cb(home, on_first_run_finish, LV_EVENT_CLICKED, this);
+    }
+
+    std::string entity_text(std::string_view id, std::string fallback) const {
+        const auto snapshot = entities.get(id);
+        return snapshot.has_value() ? deos::to_string(snapshot->value) : fallback;
+    }
+
+    std::int64_t entity_integer(std::string_view id, std::int64_t fallback) const {
+        const auto snapshot = entities.get(id);
+        if (!snapshot.has_value()) {
+            return fallback;
+        }
+        if (const auto* value = std::get_if<std::int64_t>(&snapshot->value)) {
+            return *value;
+        }
+        return fallback;
+    }
+
+    bool entity_bool(std::string_view id, bool fallback) const {
+        const auto snapshot = entities.get(id);
+        if (!snapshot.has_value()) {
+            return fallback;
+        }
+        if (const auto* value = std::get_if<bool>(&snapshot->value)) {
+            return *value;
+        }
+        return fallback;
+    }
+
+    void refresh_home_live() {
+        if (home_system_value_label == nullptr ||
+            home_storage_value_label == nullptr ||
+            home_control_value_label == nullptr ||
+            home_settings_value_label == nullptr) {
+            return;
+        }
+
+        const bool ready = entity_bool("system.ready", false);
+        const std::string storage_state =
+            entity_text("storage.sd.state", "unknown");
+        const std::string network_mode =
+            entity_text("network.mode", "offline");
+        const std::string network_ip =
+            entity_text("network.ip", "");
+        const std::string brightness =
+            entity_text("display.brightness", "72");
+
+        const std::string render_key =
+            std::string(ready ? "1" : "0") + "|" +
+            storage_state + "|" + network_mode + "|" + network_ip + "|" +
+            brightness + "|" + std::to_string(entities.size()) + "|" +
+            std::to_string(actions.size());
+
+        if (render_key == home_render_key) {
+            return;
+        }
+        home_render_key = render_key;
+
+        lv_label_set_text(home_system_value_label, ready ? "READY" : "STARTING");
+        lv_obj_set_style_text_color(
+            home_system_value_label,
+            ready ? color(0x71D99C) : color(0xE1C777),
+            0);
+
+        lv_label_set_text(home_storage_value_label, storage_state.c_str());
+        lv_obj_set_style_text_color(
+            home_storage_value_label,
+            storage_state == "ready" ? color(0xD8D68A) : color(0xA8A570),
+            0);
+
+        const std::string model_count =
+            std::to_string(entities.size()) + " states / " +
+            std::to_string(actions.size()) + " actions";
+        lv_label_set_text(home_control_value_label, model_count.c_str());
+
+        std::string connectivity =
+            network_mode == "unconfigured"
+                ? "Wi-Fi not configured"
+                : (network_mode == "station"
+                       ? (network_ip.empty() ? "Wi-Fi connecting" : network_ip)
+                       : "Offline");
+        connectivity += " / " + brightness + "% brightness";
+        lv_label_set_text(home_settings_value_label, connectivity.c_str());
+    }
+
+    void show_home() {
+        lv_obj_t* screen = begin_screen("Home", false);
+
+        lv_obj_t* intro = make_label(
+            screen,
+            "Device status and controls",
+            color(0x75808D));
+        lv_obj_set_pos(intro, kMargin, 72);
+
+        constexpr int col = 216;
+        constexpr int wide = 444;
+
+        lv_obj_t* system = make_tile(
+            screen, kMargin, 112, 672, "This device", "Local system status",
+            color(0x14243B), color(0x285887));
+        home_system_value_label = make_label(
+            system, "STARTING", color(0xE1C777), &lv_font_montserrat_20);
+        lv_obj_set_pos(home_system_value_label, 0, 84);
+        lv_obj_add_event_cb(system, on_system, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* settings = make_tile(
+            screen, kMargin, 270, wide, "Settings", "Network, display and storage",
+            color(0x17251F), color(0x28573F));
+        home_settings_value_label = make_label(
+            settings, "Loading device state...", color(0x9EE2BB));
+        lv_obj_set_pos(home_settings_value_label, 0, 84);
+        lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
+
+        const auto sd = storage.snapshot();
+        lv_obj_t* files = make_tile(
+            screen, 480, 270, col, "Storage", "Internal and SD",
+            color(0x202117), color(0x55562A));
+        home_storage_value_label = make_label(
+            files,
+            platform::to_string(sd.state),
+            sd.state == platform::SdVolumeState::Ready
+                ? color(0xD8D68A)
+                : color(0xA8A570));
+        lv_obj_set_pos(home_storage_value_label, 0, 84);
+        lv_obj_add_event_cb(files, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* control = make_tile(
+            screen, kMargin, 428, col, "Control", "State and actions",
+            color(0x171B21), color(0x2A3039));
+        const std::string model_count =
+            std::to_string(entities.size()) + " states / " +
+            std::to_string(actions.size()) + " actions";
+        home_control_value_label =
+            make_label(control, model_count.c_str(), color(0xA9B1BA));
+        lv_obj_set_pos(home_control_value_label, 0, 84);
+        lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* apps = make_tile(
+            screen, 252, 428, col, "Apps", "Device applications",
+            color(0x1D1C1B), color(0x343330));
+        lv_obj_t* app_count = make_label(apps, "Open app list", color(0xA9B1BA));
+        lv_obj_set_pos(app_count, 0, 84);
+        lv_obj_add_event_cb(apps, on_apps, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* ai = make_tile(
+            screen, 480, 428, col, "AI", "Optional service",
+            color(0x171B21), color(0x2A3039));
+        lv_obj_t* ai_hint = make_label(ai, "Not configured", color(0x8C97A4));
+        lv_obj_set_pos(ai_hint, 0, 84);
+        lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* dock = lv_obj_create(screen);
+        lv_obj_set_pos(dock, kMargin, 610);
+        lv_obj_set_size(dock, 672, 82);
+        lv_obj_remove_flag(dock, LV_OBJ_FLAG_SCROLLABLE);
+        set_panel_style(dock, color(0x10141A), color(0x242A32));
+        lv_obj_set_style_pad_all(dock, 10, 0);
+
+        const char* dock_labels[] = {"HOME", "CONTROL", "APPS", "SETTINGS"};
+        for (int i = 0; i < 4; ++i) {
+            lv_obj_t* item = lv_button_create(dock);
+            lv_obj_set_pos(item, i * 160, 0);
+            lv_obj_set_size(item, 150, 60);
+            lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(item, 0, 0);
+            lv_obj_set_style_shadow_width(item, 0, 0);
+            lv_obj_t* text = make_label(
+                item,
+                dock_labels[i],
+                i == 0 ? color(0xF5F7FA) : color(0x697481));
+            lv_obj_center(text);
+            if (i == 0) {
+                lv_obj_add_event_cb(item, on_home, LV_EVENT_CLICKED, this);
+            } else if (i == 1) {
+                lv_obj_add_event_cb(item, on_control, LV_EVENT_CLICKED, this);
+            } else if (i == 2) {
+                lv_obj_add_event_cb(item, on_apps, LV_EVENT_CLICKED, this);
+            } else {
+                lv_obj_add_event_cb(item, on_settings, LV_EVENT_CLICKED, this);
+            }
+        }
+
+        (void)control;
+        (void)apps;
+        (void)ai;
+
+        refresh_home_live();
+        home_timer = lv_timer_create(on_home_timer, 750, this);
+    }
+
+    lv_obj_t* make_info_card(lv_obj_t* screen,
+                              const char* status,
+                              const char* title,
+                              const char* body,
+                              lv_color_t accent) {
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 126);
+        lv_obj_set_size(card, 672, 430);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* state = make_label(card, status, accent, &lv_font_montserrat_20);
+        lv_obj_set_pos(state, 0, 0);
+
+        lv_obj_t* heading = make_label(
+            card, title, color(0xF3F6F9), &lv_font_montserrat_28);
+        lv_obj_set_pos(heading, 0, 50);
+
+        lv_obj_t* detail = make_label(card, body, color(0x929EAA));
+        lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(detail, 610);
+        lv_obj_set_pos(detail, 0, 106);
+        return card;
+    }
+
+    void show_ai() {
+        lv_obj_t* screen = begin_screen("AI", true);
+        lv_obj_t* card = make_info_card(
+            screen,
+            "OPTIONAL",
+            "Intelligence is a service, not the OS.",
+            "DEOS is fully usable without a model. When a provider is configured, "
+            "AI will consume the same State + Actions interfaces as apps and "
+            "automations.\n\n"
+            "Planned providers: Qwen / OpenAI-compatible endpoints / local network "
+            "models. Models will receive capability-scoped Actions instead of raw "
+            "hardware access.",
+            color(0x73AFFF));
+
+        lv_obj_t* provider = make_label(
+            card, "Provider:  not configured", color(0xC8D5E6), &lv_font_montserrat_20);
+        lv_obj_set_pos(provider, 0, 312);
+    }
+
+    void show_control() {
+        lv_obj_t* screen = begin_screen("Control", true);
+
+        lv_obj_t* body = lv_obj_create(screen);
+        lv_obj_set_pos(body, 24, kHeaderHeight);
+        lv_obj_set_size(body, 672, 574);
+        lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(body, 0, 0);
+        lv_obj_set_style_pad_all(body, 10, 0);
+        lv_obj_set_style_pad_row(body, 10, 0);
+        lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+
+        const platform::NetworkSnapshot net = network.snapshot();
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+
+        const std::string brightness =
+            std::to_string(desired_brightness()) + "% brightness";
+        lv_obj_t* display_row = make_row(body, "Display", brightness.c_str());
+        lv_obj_add_event_cb(display_row, on_display, LV_EVENT_CLICKED, this);
+
+        const std::string network_state =
+            net.ssid.empty()
+                ? "Wi-Fi not configured"
+                : (net.connected ? net.ssid : "Wi-Fi offline");
+        lv_obj_t* network_row = make_row(body, "Network", network_state.c_str());
+        lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* storage_row = make_row(
+            body, "Storage", platform::to_string(sd.state));
+        lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* settings_row = make_row(
+            body, "Settings", "All device configuration");
+        lv_obj_add_event_cb(settings_row, on_settings, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* system_row = make_row(
+            body, "About this device", "Build, runtime and hardware status");
+        lv_obj_add_event_cb(system_row, on_system, LV_EVENT_CLICKED, this);
+    }
+
+    void show_automations() {
+        lv_obj_t* screen = begin_screen("Automations", true);
+        lv_obj_t* card = make_info_card(
+            screen,
+            "ON-DEVICE",
+            "Rules run locally.",
+            "Automations will subscribe to entity changes, time and hardware events, "
+            "then invoke registered Actions. No cloud or AI is required.\n\n"
+            "The same Action registry will later be callable by AI, so deterministic "
+            "rules and model-driven behavior share one capability layer.",
+            color(0xD6A2F0));
+
+        lv_obj_t* rules = make_label(
+            card, "Active rules   0", color(0xD9C9E1), &lv_font_montserrat_20);
+        lv_obj_set_pos(rules, 0, 312);
+    }
+
+    void show_apps() {
+        lv_obj_t* screen = begin_screen("Apps", true);
+
+        lv_obj_t* body = lv_obj_create(screen);
+        lv_obj_set_pos(body, 24, kHeaderHeight);
+        lv_obj_set_size(body, 672, 574);
+        lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(body, 0, 0);
+        lv_obj_set_style_pad_all(body, 10, 0);
+        lv_obj_set_style_pad_row(body, 10, 0);
+        lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+
+        lv_obj_t* ai = make_row(body, "AI", "Optional model and assistant surface");
+        lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* control = make_row(body, "Control", "Entities and Actions");
+        lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* automations = make_row(body, "Automations", "Local event-action rules");
+        lv_obj_add_event_cb(automations, on_automations, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* storage_row = make_row(body, "Storage", "Internal and SD volume");
+        lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* settings = make_row(body, "Settings", "Device configuration");
+        lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
+    }
+
+    void show_quick_settings() {
+        lv_obj_t* screen = begin_screen("Quick Settings", true);
+
+        lv_obj_t* brightness = lv_obj_create(screen);
+        lv_obj_set_pos(brightness, 24, 118);
+        lv_obj_set_size(brightness, 672, 190);
+        set_panel_style(brightness, color(0x11151A), color(0x2A313A));
+        lv_obj_set_style_pad_all(brightness, 24, 0);
+
+        lv_obj_t* title = make_label(
+            brightness, "Brightness", color(0xF2F5F8), &lv_font_montserrat_20);
+        lv_obj_set_pos(title, 0, 0);
+
+        const int value = desired_brightness();
+        char value_text[16]{};
+        std::snprintf(value_text, sizeof(value_text), "%d%%", value);
+        brightness_value_label = make_label(
+            brightness, value_text, color(0x7FB4FF), &lv_font_montserrat_28);
+        lv_obj_align(brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, -2);
+
+        lv_obj_t* slider = lv_slider_create(brightness);
+        lv_obj_set_pos(slider, 0, 88);
+        lv_obj_set_size(slider, 610, 30);
+        lv_slider_set_range(slider, 10, 100);
+        lv_slider_set_value(slider, value, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(slider, color(0x252B34), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(slider, color(0x4E8FE8), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(slider, color(0xE9EEF5), LV_PART_KNOB);
+        lv_obj_set_style_pad_all(slider, 10, LV_PART_KNOB);
+        lv_obj_add_event_cb(slider, on_brightness_value, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_add_event_cb(slider, on_brightness_commit, LV_EVENT_RELEASED, this);
+
+        const platform::NetworkSnapshot net = network.snapshot();
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+
+        lv_obj_t* network_button = make_tile(
+            screen, 24, 330, 216, "Network",
+            net.ssid.empty() ? "Not configured"
+                             : (net.connected ? "Connected" : "Offline"),
+            color(0x151C24), color(0x2A3D52));
+        lv_obj_add_event_cb(network_button, on_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* storage_button = make_tile(
+            screen, 252, 330, 216, "Storage",
+            platform::to_string(sd.state),
+            color(0x201F16), color(0x4E4A29));
+        lv_obj_add_event_cb(storage_button, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* settings_button = make_tile(
+            screen, 480, 330, 216, "Settings",
+            "All controls",
+            color(0x191B20), color(0x30343C));
+        lv_obj_add_event_cb(settings_button, on_settings, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Quick Settings is system chrome; changes still flow through DEOS resources.",
+            color(0x697582));
+        lv_obj_set_pos(note, 24, 514);
+
+        lv_obj_t* home = make_action(
+            screen, "Home", color(0x20252D), color(0xE2E7ED), 672);
+        lv_obj_set_pos(home, 24, 584);
+        lv_obj_add_event_cb(home, on_home, LV_EVENT_CLICKED, this);
+    }
+
+    void show_settings() {
+        lv_obj_t* screen = begin_screen("Settings", true);
+
+        lv_obj_t* body = lv_obj_create(screen);
+        lv_obj_set_pos(body, 24, kHeaderHeight);
+        lv_obj_set_size(body, 672, 574);
+        lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(body, 0, 0);
+        lv_obj_set_style_pad_all(body, 10, 0);
+        lv_obj_set_style_pad_row(body, 10, 0);
+        lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+
+        lv_obj_t* network_row = make_row(body, "Network", "Wi-Fi and local control plane");
+        lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* display_row = make_row(body, "Display", "Brightness and screen behavior");
+        lv_obj_add_event_cb(display_row, on_display, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* storage_row = make_row(body, "Storage", "SD card and DEOS volume");
+        lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* update_row = make_row(body, "Software Update", "A/B OTA and build status");
+        lv_obj_add_event_cb(update_row, on_update, LV_EVENT_CLICKED, this);
+
+        if (developer_mode) {
+            lv_obj_t* developer = make_row(body, "Developer", "Diagnostics and debug tools");
+            lv_obj_add_event_cb(developer, on_developer, LV_EVENT_CLICKED, this);
+        }
+
+        lv_obj_t* about = make_row(body, "About DEOS", "System, build and hardware");
+        lv_obj_add_event_cb(about, on_system, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* note = make_label(
+            body,
+            developer_mode
+                ? "Developer Mode is enabled and persists across reboot."
+                : "Developer controls stay hidden during normal use.",
+            color(0x606B77));
+        lv_obj_set_style_pad_top(note, 8, 0);
+    }
+
+    void add_info_row(lv_obj_t* parent, const char* key, const std::string& value) {
+        lv_obj_t* row = lv_obj_create(parent);
+        lv_obj_set_size(row, 620, 54);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+
+        lv_obj_t* left = make_label(row, key, color(0x7F8A97));
+        lv_obj_align(left, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t* right = make_label(row, value.c_str(), color(0xE6EAF0));
+        lv_obj_align(right, LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+    void show_network() {
+        lv_obj_t* screen = begin_screen("Network", true);
+        const platform::NetworkSnapshot net = network.snapshot();
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 118);
+        lv_obj_set_size(card, 672, 430);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 26, 0);
+
+        const char* state_text = net.ssid.empty()
+                                     ? "NOT CONFIGURED"
+                                     : (net.connected ? "CONNECTED" : "CONNECTING");
+        lv_obj_t* state = make_label(
+            card,
+            state_text,
+            net.connected ? color(0x72D69D) : color(0xE2C66F),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(state, 0, 0);
+
+        if (!net.initialized) {
+            lv_obj_t* note = make_label(
+                card,
+                "Network service is still starting.",
+                color(0x8C97A4));
+            lv_obj_set_pos(note, 0, 56);
+            return;
+        }
+
+        if (net.ssid.empty()) {
+            lv_obj_t* title = make_label(
+                card,
+                "Wi-Fi is configured only on this display.",
+                color(0xF4F7FA),
+                &lv_font_montserrat_28);
+            lv_obj_set_pos(title, 0, 62);
+
+            lv_obj_t* step = make_label(
+                card,
+                "DEOS will not create a setup access point. Tap the button below, "
+                "choose a nearby network and enter its password. Credentials remain "
+                "in device NVS.",
+                color(0x7E8996));
+            lv_label_set_long_mode(step, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(step, 610);
+            lv_obj_set_pos(step, 0, 132);
+
+            lv_obj_t* choose = make_action(
+                screen, "Choose Wi-Fi", color(0x245BA5), color(0xFFFFFF), 672);
+            lv_obj_set_pos(choose, 24, 576);
+            lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
+        } else {
+            lv_obj_t* details = lv_obj_create(card);
+            lv_obj_set_pos(details, 0, 58);
+            lv_obj_set_size(details, 620, 250);
+            lv_obj_set_style_bg_opa(details, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(details, 0, 0);
+            lv_obj_set_style_pad_all(details, 0, 0);
+            lv_obj_set_style_pad_row(details, 2, 0);
+            lv_obj_set_flex_flow(details, LV_FLEX_FLOW_COLUMN);
+
+            add_info_row(details, "Wi-Fi", net.ssid);
+            add_info_row(details, "IP", net.ip.empty() ? "waiting for DHCP" : net.ip);
+            add_info_row(details, "Local name", "deos.local");
+            add_info_row(details, "Control API", "port 80 / token auth");
+
+            lv_obj_t* choose = make_action(
+                screen, "Change Wi-Fi...", color(0x245BA5), color(0xFFFFFF), 326);
+            lv_obj_set_pos(choose, 24, 576);
+            lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
+
+            lv_obj_t* forget = make_action(
+                screen, "Forget Wi-Fi...", color(0x3A2023), color(0xF2B2B7), 326);
+            lv_obj_set_pos(forget, 370, 576);
+            lv_obj_add_event_cb(forget, on_forget_confirm, LV_EVENT_CLICKED, this);
+        }
+    }
+
+    void render_wifi_scan_body() {
+        if (wifi_scan_body == nullptr) {
+            return;
+        }
+
+        const platform::WifiScanSnapshot scan = network.scan_snapshot();
+        std::string key = scan.scanning ? "scanning" : scan.error;
+        for (const auto& entry : scan.entries) {
+            key += "|" + entry.ssid + ":" + std::to_string(entry.rssi);
+        }
+        if (key == wifi_scan_render_key) {
+            return;
+        }
+        wifi_scan_render_key = std::move(key);
+        wifi_scan_entries = scan.entries;
+
+        lv_obj_clean(wifi_scan_body);
+        lv_obj_set_user_data(wifi_scan_body, this);
+
+        if (scan.scanning) {
+            lv_obj_t* spinner = lv_spinner_create(wifi_scan_body);
+            lv_obj_set_size(spinner, 58, 58);
+            lv_obj_align(spinner, LV_ALIGN_TOP_LEFT, 0, 8);
+
+            lv_obj_t* text = make_label(
+                wifi_scan_body, "Scanning nearby Wi-Fi networks...", color(0x9AA5B2));
+            lv_obj_set_pos(text, 82, 26);
+            return;
+        }
+
+        if (!scan.error.empty()) {
+            const std::string error = "Scan failed: " + scan.error;
+            lv_obj_t* text = make_label(wifi_scan_body, error.c_str(), color(0xF0A8AE));
+            lv_obj_set_pos(text, 0, 8);
+
+            lv_obj_t* retry = make_action(
+                wifi_scan_body, "Scan again", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, 72);
+            lv_obj_add_event_cb(retry, on_wifi_rescan, LV_EVENT_CLICKED, this);
+            return;
+        }
+
+        if (scan.entries.empty()) {
+            lv_obj_t* text = make_label(
+                wifi_scan_body, "No networks found.", color(0x8A95A2));
+            lv_obj_set_pos(text, 0, 8);
+
+            lv_obj_t* retry = make_action(
+                wifi_scan_body, "Scan again", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, 72);
+            lv_obj_add_event_cb(retry, on_wifi_rescan, LV_EVENT_CLICKED, this);
+            return;
+        }
+
+        lv_obj_set_flex_flow(wifi_scan_body, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(wifi_scan_body, 8, 0);
+
+        for (std::size_t i = 0; i < wifi_scan_entries.size(); ++i) {
+            const auto& entry = wifi_scan_entries[i];
+            char detail[64]{};
+            std::snprintf(
+                detail,
+                sizeof(detail),
+                "%s  /  %d dBm  /  ch %d",
+                entry.secured ? "Secured" : "Open",
+                entry.rssi,
+                entry.channel);
+
+            lv_obj_t* row = make_row(
+                wifi_scan_body,
+                entry.ssid.c_str(),
+                detail);
+            lv_obj_set_width(row, 612);
+            lv_obj_set_user_data(
+                row,
+                reinterpret_cast<void*>(static_cast<std::uintptr_t>(i + 1)));
+            lv_obj_add_event_cb(row, on_wifi_network_selected, LV_EVENT_CLICKED, this);
+        }
+
+        lv_obj_t* rescan = make_action(
+            wifi_scan_body, "Rescan", color(0x20252D), color(0xDCE3EA), 612);
+        lv_obj_add_event_cb(rescan, on_wifi_rescan, LV_EVENT_CLICKED, this);
+    }
+
+    void show_wifi_scan() {
+        lv_obj_t* screen = begin_screen("Choose Wi-Fi", true);
+
+        wifi_scan_body = lv_obj_create(screen);
+        lv_obj_set_pos(wifi_scan_body, 24, 112);
+        lv_obj_set_size(wifi_scan_body, 672, 570);
+        set_panel_style(wifi_scan_body, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(wifi_scan_body, 24, 0);
+        lv_obj_set_style_pad_bottom(wifi_scan_body, 24, 0);
+
+        const auto current = network.scan_snapshot();
+        if (!current.scanning && current.entries.empty()) {
+            (void)network.request_scan();
+        }
+
+        wifi_scan_render_key.clear();
+        render_wifi_scan_body();
+        wifi_scan_timer = lv_timer_create(on_wifi_scan_timer, 400, this);
+    }
+
+    void show_wifi_credentials() {
+        lv_obj_t* screen = begin_screen("Join Wi-Fi", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 112);
+        lv_obj_set_size(card, 672, wifi_selected_secured ? 180 : 250);
+        set_panel_style(card, color(0x11151A), color(0x2B3440));
+        lv_obj_set_style_pad_all(card, 24, 0);
+
+        lv_obj_t* ssid = make_label(
+            card, wifi_selected_ssid.c_str(), color(0xF5F7FA), &lv_font_montserrat_28);
+        lv_obj_set_pos(ssid, 0, 0);
+
+        lv_obj_t* detail = make_label(
+            card,
+            wifi_selected_secured ? "Enter the network password." : "This network is open.",
+            color(0x8F9BA8));
+        lv_obj_set_pos(detail, 0, 48);
+
+        if (!wifi_join_error.empty()) {
+            lv_obj_t* error = make_label(card, wifi_join_error.c_str(), color(0xF0A8AE));
+            lv_obj_set_pos(error, 0, 86);
+        }
+
+        if (wifi_selected_secured) {
+            wifi_password_area = lv_textarea_create(screen);
+            lv_obj_set_pos(wifi_password_area, 24, 310);
+            lv_obj_set_size(wifi_password_area, 672, 64);
+            lv_textarea_set_one_line(wifi_password_area, true);
+            lv_textarea_set_password_mode(wifi_password_area, true);
+            lv_textarea_set_max_length(wifi_password_area, 63);
+            lv_textarea_set_placeholder_text(wifi_password_area, "Wi-Fi password");
+            lv_obj_add_event_cb(
+                wifi_password_area, on_wifi_join, LV_EVENT_READY, this);
+
+            lv_obj_t* keyboard = lv_keyboard_create(screen);
+            lv_obj_set_pos(keyboard, 24, 386);
+            lv_obj_set_size(keyboard, 672, 230);
+            lv_keyboard_set_textarea(keyboard, wifi_password_area);
+        }
+
+        lv_obj_t* join = make_action(
+            screen, "Save and connect", color(0x245BA5), color(0xFFFFFF), 672);
+        lv_obj_set_pos(join, 24, 632);
+        lv_obj_add_event_cb(join, on_wifi_join, LV_EVENT_CLICKED, this);
+    }
+
+    void show_forget_wifi_confirm() {
+        lv_obj_t* screen = begin_screen("Forget Wi-Fi?", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 138);
+        lv_obj_set_size(card, 672, 300);
+        set_panel_style(card, color(0x24171A), color(0x633239));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* title = make_label(
+            card,
+            "DEOS will remove the saved Wi-Fi profile.",
+            color(0xF4B4BA),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* detail = make_label(
+            card,
+            "The device API token is kept. After reboot DEOS will return to\n"
+            "local-only mode. Configure Wi-Fi again in Settings > Network.",
+            color(0xC6B9BC));
+        lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(detail, 610);
+        lv_obj_set_pos(detail, 0, 78);
+
+        lv_obj_t* cancel = make_action(
+            screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
+        lv_obj_set_pos(cancel, 24, 492);
+        lv_obj_add_event_cb(cancel, on_back, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* forget = make_action(
+            screen, "Forget and reboot", color(0x8D3039), color(0xFFFFFF), 340);
+        lv_obj_set_pos(forget, 356, 492);
+        lv_obj_add_event_cb(forget, on_forget_wifi, LV_EVENT_CLICKED, this);
+    }
+
+    void show_update() {
+        lv_obj_t* screen = begin_screen("Software Update", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 120);
+        lv_obj_set_size(card, 672, 430);
+        set_panel_style(card, color(0x11151A), color(0x29333E));
+        lv_obj_set_style_pad_all(card, 26, 0);
+        lv_obj_set_style_pad_row(card, 2, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+
+        const esp_app_desc_t* app = esp_app_get_description();
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+        const bool ota_ready = resources.ready({"Update", "system"});
+        const platform::NetworkSnapshot net = network.snapshot();
+
+        add_info_row(card, "Build", app != nullptr ? app->version : "unknown");
+        add_info_row(card, "ESP-IDF", app != nullptr ? app->idf_ver : "unknown");
+        add_info_row(card, "Running slot",
+                     running != nullptr ? running->label : "unknown");
+        add_info_row(card, "Next slot",
+                     next != nullptr ? next->label : "unknown");
+        add_info_row(card, "A/B rollback", "enabled");
+        add_info_row(card, "Remote OTA",
+                     ota_ready ? "ready" : "waiting for Network/wifi");
+        add_info_row(card, "Device",
+                     net.connected && !net.ip.empty() ? net.ip : "deos.local");
+
+        lv_obj_t* note = make_label(
+            screen,
+            "Developer OTA uploads only the application image to Update/system.\n"
+            "Use: deosctl ota deos_esp32p4.bin\n"
+            "The new slot is accepted only after local DEOS health checks pass.",
+            color(0x758290));
+        lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(note, 672);
+        lv_obj_set_pos(note, 24, 580);
+    }
+
+    void show_developer() {
+        lv_obj_t* screen = begin_screen("Developer", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 110);
+        lv_obj_set_size(card, 672, 510);
+        set_panel_style(card, color(0x10161B), color(0x28404A));
+        lv_obj_set_style_pad_all(card, 24, 0);
+        lv_obj_set_style_pad_row(card, 2, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+
+        const platform::NetworkSnapshot net = network.snapshot();
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+        const esp_partition_t* running = esp_ota_get_running_partition();
+
+        const std::int64_t uptime_sec = entity_integer(
+            "system.uptime_sec",
+            static_cast<std::int64_t>(esp_timer_get_time() / 1000000ULL));
+        const std::int64_t task_count = entity_integer(
+            "system.tasks",
+            static_cast<std::int64_t>(uxTaskGetNumberOfTasks()));
+        const std::int64_t internal_free = entity_integer(
+            "system.internal_free_bytes",
+            static_cast<std::int64_t>(
+                heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        const std::int64_t internal_largest = entity_integer(
+            "system.internal_largest_bytes",
+            static_cast<std::int64_t>(
+                heap_caps_get_largest_free_block(
+                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        const std::int64_t psram_free = entity_integer(
+            "system.psram_free_bytes",
+            static_cast<std::int64_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+
+        add_info_row(card, "Uptime", std::to_string(uptime_sec) + " s");
+        add_info_row(card, "Tasks", std::to_string(task_count));
+        add_info_row(card, "Internal free",
+                     bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, internal_free))));
+        add_info_row(card, "Largest internal",
+                     bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, internal_largest))));
+        add_info_row(card, "PSRAM free",
+                     bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(0, psram_free))));
+        add_info_row(card, "Network",
+                     net.ssid.empty()
+                         ? "not configured"
+                         : (net.connected ? "connected" : "offline/connecting"));
+        add_info_row(card, "IP", net.ip.empty() ? "-" : net.ip);
+        add_info_row(card, "SD", platform::to_string(sd.state));
+        add_info_row(card, "OTA slot",
+                     running != nullptr ? running->label : "unknown");
+
+        const std::string token = network.api_token();
+        if (!token.empty()) {
+            const std::string token_a = token.substr(0, std::min<std::size_t>(16, token.size()));
+            const std::string token_b =
+                token.size() > 16 ? token.substr(16, 16) : std::string("-");
+            add_info_row(card, "API token 1/2", token_a);
+            add_info_row(card, "API token 2/2", token_b);
+        }
+
+        lv_obj_t* disable = make_action(
+            screen, "Disable Developer Mode", color(0x302226), color(0xE7B3B8), 672);
+        lv_obj_set_pos(disable, 24, 628);
+        lv_obj_add_event_cb(disable, on_disable_developer, LV_EVENT_CLICKED, this);
+    }
+
+    int desired_brightness() const {
+        const std::string value = resources.desired_field(
+            {"Display", "primary"}, "brightness", "72");
+        char* end = nullptr;
+        const long parsed = std::strtol(value.c_str(), &end, 10);
+        if (end == value.c_str() || *end != '\0') {
+            return 72;
+        }
+        return static_cast<int>(std::clamp<long>(parsed, 10, 100));
+    }
+
+    void show_display() {
+        lv_obj_t* screen = begin_screen("Display", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 130);
+        lv_obj_set_size(card, 672, 360);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 28, 0);
+
+        lv_obj_t* heading = make_label(
+            card, "Brightness", color(0xF2F5F8), &lv_font_montserrat_20);
+        lv_obj_set_pos(heading, 0, 0);
+
+        const int brightness = desired_brightness();
+        char value_text[16]{};
+        std::snprintf(value_text, sizeof(value_text), "%d%%", brightness);
+        brightness_value_label = make_label(
+            card, value_text, color(0x7FB4FF), &lv_font_montserrat_28);
+        lv_obj_align(brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, -2);
+
+        lv_obj_t* slider = lv_slider_create(card);
+        lv_obj_set_pos(slider, 0, 86);
+        lv_obj_set_size(slider, 610, 30);
+        lv_slider_set_range(slider, 10, 100);
+        lv_slider_set_value(slider, brightness, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(slider, color(0x252B34), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(slider, color(0x4E8FE8), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(slider, color(0xE9EEF5), LV_PART_KNOB);
+        lv_obj_set_style_pad_all(slider, 10, LV_PART_KNOB);
+        lv_obj_add_event_cb(slider, on_brightness_value, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_add_event_cb(slider, on_brightness_commit, LV_EVENT_RELEASED, this);
+
+        lv_obj_t* note = make_label(
+            card,
+            "Brightness is applied through Display/primary desired state.\n"
+            "The 10% minimum prevents an accidental black-screen trap.",
+            color(0x7E8996));
+        lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(note, 610);
+        lv_obj_set_pos(note, 0, 158);
+
+        lv_obj_t* state = make_label(
+            card,
+            "Touch  →  Action  →  Desired State  →  Reconciler  →  Display",
+            color(0x66809F));
+        lv_obj_set_pos(state, 0, 266);
+    }
+
+    void show_system() {
+        lv_obj_t* screen = begin_screen("System", true);
+
+        lv_obj_t* card = lv_obj_create(screen);
+        lv_obj_set_pos(card, 24, 110);
+        lv_obj_set_size(card, 672, 480);
+        set_panel_style(card, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(card, 24, 0);
+        lv_obj_set_style_pad_row(card, 2, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+
+        const esp_app_desc_t* app = esp_app_get_description();
+        const esp_partition_t* running = esp_ota_get_running_partition();
+
+        add_info_row(card, "Board", "Waveshare ESP32-P4 4B");
+        add_info_row(card, "CPU", "ESP32-P4 @ 360 MHz");
+        add_info_row(
+            card,
+            "PSRAM free",
+            bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(
+                0,
+                entity_integer(
+                    "system.psram_free_bytes",
+                    static_cast<std::int64_t>(
+                        heap_caps_get_free_size(MALLOC_CAP_SPIRAM)))))));
+        add_info_row(
+            card,
+            "Internal RAM free",
+            bytes_human(static_cast<uint64_t>(std::max<std::int64_t>(
+                0,
+                entity_integer(
+                    "system.internal_free_bytes",
+                    static_cast<std::int64_t>(
+                        heap_caps_get_free_size(
+                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)))))));
+        add_info_row(card, "Flash", "32 MB");
+        add_info_row(card, "ESP-IDF", app != nullptr ? app->idf_ver : "unknown");
+        add_info_row(card, "Build", app != nullptr ? app->version : "unknown");
+        add_info_row(card, "OTA slot",
+                     running != nullptr ? running->label : "unknown");
+
+        lv_obj_t* build_button = lv_button_create(screen);
+        lv_obj_set_pos(build_button, 24, 606);
+        lv_obj_set_size(build_button, 672, 76);
+        set_panel_style(
+            build_button,
+            developer_mode ? color(0x14241C) : color(0x13171D),
+            developer_mode ? color(0x28573F) : color(0x292F38));
+        lv_obj_set_style_shadow_width(build_button, 0, 0);
+        lv_obj_add_event_cb(build_button, on_build_tap, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* build_text = make_label(
+            build_button,
+            developer_mode
+                ? "Developer mode enabled"
+                : "Build information",
+            developer_mode ? color(0x79D7A3) : color(0xD8DEE6),
+            &lv_font_montserrat_20);
+        lv_obj_align(build_text, LV_ALIGN_LEFT_MID, 0, -10);
+
+        lv_obj_t* hint = make_label(
+            build_button,
+            developer_mode
+                ? "Diagnostics will appear in Settings."
+                : "Tap for build details.",
+            color(0x6F7A86));
+        lv_obj_align(hint, LV_ALIGN_LEFT_MID, 0, 20);
+    }
+
+    void render_storage_body() {
+        if (storage_body == nullptr) {
+            return;
+        }
+
+        const platform::SdVolumeSnapshot sd = storage.snapshot();
+        const std::string render_key =
+            std::string(platform::to_string(sd.state)) + "|" +
+            sd.message + "|" +
+            sd.operation + "|" +
+            sd.card_name + "|" +
+            std::to_string(sd.total_bytes) + "|" +
+            std::to_string(sd.free_bytes);
+
+        if (render_key == storage_render_key) {
+            return;
+        }
+        storage_render_key = render_key;
+        lv_obj_clean(storage_body);
+
+        lv_obj_t* status = make_label(
+            storage_body,
+            platform::to_string(sd.state),
+            sd.state == platform::SdVolumeState::Ready
+                ? color(0x74D89F)
+                : (sd.state == platform::SdVolumeState::Busy
+                       ? color(0x7FB4FF)
+                       : color(0xE1C777)),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(status, 0, 0);
+
+        lv_obj_t* message = make_label(storage_body, sd.message.c_str(), color(0x9AA5B2));
+        lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(message, 620);
+        lv_obj_set_pos(message, 0, 48);
+
+        int y = 108;
+        if (!sd.card_name.empty()) {
+            lv_obj_t* card_name = make_label(storage_body, sd.card_name.c_str(), color(0xD7DDE5));
+            lv_obj_set_pos(card_name, 0, y);
+            y += 34;
+        }
+
+        if (sd.total_bytes > 0) {
+            const uint64_t used = sd.total_bytes > sd.free_bytes
+                                      ? sd.total_bytes - sd.free_bytes
+                                      : 0;
+            const std::string usage =
+                bytes_human(used) + " used  /  " + bytes_human(sd.total_bytes);
+            lv_obj_t* usage_label = make_label(storage_body, usage.c_str(), color(0x737F8C));
+            lv_obj_set_pos(usage_label, 0, y);
+            y += 48;
+        }
+
+        if (sd.state == platform::SdVolumeState::Foreign) {
+            lv_obj_t* preserve = make_label(
+                storage_body,
+                "Existing files are untouched until you choose an action.",
+                color(0xD9C87F));
+            lv_obj_set_pos(preserve, 0, y);
+            y += 58;
+
+            lv_obj_t* keep = make_action(
+                storage_body, "Leave unchanged", color(0x20252D), color(0xE2E7ED));
+            lv_obj_set_pos(keep, 0, y);
+            lv_obj_add_event_cb(keep, on_home, LV_EVENT_CLICKED, this);
+
+            lv_obj_t* init = make_action(
+                storage_body, "Initialize for DEOS", color(0x245BA5), color(0xFFFFFF));
+            lv_obj_set_pos(init, 316, y);
+            lv_obj_add_event_cb(init, on_initialize_sd, LV_EVENT_CLICKED, this);
+
+            y += 76;
+            lv_obj_t* format = make_action(
+                storage_body, "Format instead...", color(0x3A2023), color(0xF1A5AB), 612);
+            lv_obj_set_pos(format, 0, y);
+            lv_obj_add_event_cb(format, on_format_confirm, LV_EVENT_CLICKED, this);
+        } else if (sd.state == platform::SdVolumeState::NeedsFormat) {
+            lv_obj_t* warning = make_label(
+                storage_body,
+                "DEOS will never format this card automatically.",
+                color(0xF1A5AB));
+            lv_obj_set_pos(warning, 0, y);
+            y += 58;
+
+            lv_obj_t* format = make_action(
+                storage_body, "Format for DEOS...", color(0x7A2830), color(0xFFFFFF), 612);
+            lv_obj_set_pos(format, 0, y);
+            lv_obj_add_event_cb(format, on_format_confirm, LV_EVENT_CLICKED, this);
+        } else if (sd.state == platform::SdVolumeState::Error) {
+            lv_obj_t* warning = make_label(
+                storage_body,
+                "The card was not classified safely. DEOS will not offer formatting.",
+                color(0xF1A5AB));
+            lv_label_set_long_mode(warning, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(warning, 610);
+            lv_obj_set_pos(warning, 0, y);
+            y += 72;
+
+            lv_obj_t* retry = make_action(
+                storage_body, "Rescan", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, y);
+            lv_obj_add_event_cb(retry, on_rescan_sd, LV_EVENT_CLICKED, this);
+        } else if (sd.state == platform::SdVolumeState::Ready) {
+            lv_obj_t* ready = make_label(
+                storage_body,
+                "DEOS/Apps  /  AppData  /  Packages  /  Backups  /  Logs\n"
+                "Media  /  Documents  /  Downloads",
+                color(0x8F9BA8));
+            lv_label_set_long_mode(ready, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(ready, 610);
+            lv_obj_set_pos(ready, 0, y);
+        } else if (sd.state == platform::SdVolumeState::Absent) {
+            lv_obj_t* hint = make_label(
+                storage_body,
+                "Insert a microSD card, then ask DEOS to scan the slot again.",
+                color(0x737F8C));
+            lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(hint, 610);
+            lv_obj_set_pos(hint, 0, y);
+            y += 72;
+
+            lv_obj_t* retry = make_action(
+                storage_body, "Rescan SD card", color(0x245BA5), color(0xFFFFFF), 612);
+            lv_obj_set_pos(retry, 0, y);
+            lv_obj_add_event_cb(retry, on_rescan_sd, LV_EVENT_CLICKED, this);
+        } else if (sd.state == platform::SdVolumeState::Busy) {
+            lv_obj_t* progress = lv_spinner_create(storage_body);
+            lv_obj_set_size(progress, 58, 58);
+            lv_obj_set_pos(progress, 0, y);
+            lv_obj_t* op = make_label(
+                storage_body,
+                sd.operation == "format"
+                    ? "Formatting can take a moment. Do not remove the card."
+                    : "Working on the SD card...",
+                color(0x7F8A97));
+            lv_obj_set_pos(op, 80, y + 20);
+        }
+    }
+
+    void show_storage() {
+        lv_obj_t* screen = begin_screen("Storage", true);
+
+        storage_body = lv_obj_create(screen);
+        storage_render_key.clear();
+        lv_obj_set_pos(storage_body, 24, 112);
+        lv_obj_set_size(storage_body, 672, 570);
+        set_panel_style(storage_body, color(0x11151A), color(0x262C34));
+        lv_obj_set_style_pad_all(storage_body, 24, 0);
+
+        render_storage_body();
+        storage_timer = lv_timer_create(on_storage_timer, 500, this);
+    }
+
+    void show_format_confirm() {
+        lv_obj_t* screen = begin_screen("Erase SD card?", true);
+
+        lv_obj_t* warning = lv_obj_create(screen);
+        lv_obj_set_pos(warning, 24, 128);
+        lv_obj_set_size(warning, 672, 360);
+        set_panel_style(warning, color(0x261417), color(0x713038));
+        lv_obj_set_style_pad_all(warning, 28, 0);
+
+        lv_obj_t* title = make_label(
+            warning, "This deletes everything on the SD card.", color(0xFFB2B8),
+            &lv_font_montserrat_28);
+        lv_obj_set_pos(title, 0, 0);
+
+        lv_obj_t* detail = make_label(
+            warning,
+            "DEOS will replace the card layout with one partition using the\n"
+            "whole card, create a FAT volume, then initialize:\n\n"
+            "DEOS/Apps, AppData, Packages, Backups, Logs\n"
+            "Media/Music, Pictures, Video\n"
+            "Documents and Downloads\n\n"
+            "This action cannot preserve existing files.",
+            color(0xD6C1C3));
+        lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(detail, 610);
+        lv_obj_set_pos(detail, 0, 64);
+
+        lv_obj_t* cancel = make_action(
+            screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
+        lv_obj_set_pos(cancel, 24, 530);
+        lv_obj_add_event_cb(cancel, on_back, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* erase = make_action(
+            screen, "Erase and format", color(0x9A2F39), color(0xFFFFFF), 340);
+        lv_obj_set_pos(erase, 356, 530);
+        lv_obj_add_event_cb(erase, on_format_sd, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* footnote = make_label(
+            screen,
+            "Formatting only starts after pressing the red button above.",
+            color(0x6F7A86));
+        lv_obj_set_pos(footnote, 24, 612);
+    }
+
+    static Impl* self(lv_event_t* event) {
+        return static_cast<Impl*>(lv_event_get_user_data(event));
+    }
+
+    static void on_first_run_network(lv_event_t* event) {
+        Impl* ui = self(event);
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Network);
+        ui->render_screen(ScreenId::FirstRunNetwork);
+    }
+
+    static void on_first_run_wifi_scan(lv_event_t* event) {
+        Impl* ui = self(event);
+        ui->onboarding_wifi_flow = true;
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Network);
+        ui->navigate(ScreenId::WifiScan);
+    }
+
+    static void on_first_run_storage(lv_event_t* event) {
+        Impl* ui = self(event);
+        ui->onboarding_wifi_flow = false;
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Storage);
+        ui->render_screen(ScreenId::FirstRunStorage);
+    }
+
+    static void on_first_run_done(lv_event_t* event) {
+        Impl* ui = self(event);
+        (void)ui->preferences.set_setup_step(platform::SetupStep::Ready);
+        ui->render_screen(ScreenId::FirstRunReady);
+    }
+
+    static void on_first_run_finish(lv_event_t* event) {
+        self(event)->finish_first_run();
+    }
+
+    static void on_home(lv_event_t* event) {
+        self(event)->go_home();
+    }
+
+    static void on_back(lv_event_t* event) {
+        self(event)->go_back();
+    }
+
+    static void on_quick_settings(lv_event_t* event) {
+        self(event)->navigate(ScreenId::QuickSettings);
+    }
+
+    static void on_settings(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Settings);
+    }
+
+    static void on_ai(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Ai);
+    }
+
+    static void on_control(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Control);
+    }
+
+    static void on_automations(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Automations);
+    }
+
+    static void on_apps(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Apps);
+    }
+
+    static void on_system(lv_event_t* event) {
+        self(event)->navigate(ScreenId::System);
+    }
+
+    static void on_display(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Display);
+    }
+
+    static void on_brightness_value(lv_event_t* event) {
+        Impl* ui = self(event);
+        if (ui->brightness_value_label == nullptr) {
+            return;
+        }
+        lv_obj_t* slider = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        const int value = lv_slider_get_value(slider);
+        char text[16]{};
+        std::snprintf(text, sizeof(text), "%d%%", value);
+        lv_label_set_text(ui->brightness_value_label, text);
+    }
+
+    static void on_brightness_commit(lv_event_t* event) {
+        Impl* ui = self(event);
+        lv_obj_t* slider = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        const int value = lv_slider_get_value(slider);
+        const deos::ActionContext context{
+            "shell",
+            {"display.control"},
+        };
+        const auto result = ui->actions.invoke(
+            "display.brightness.set",
+            context,
+            {{"value", static_cast<std::int64_t>(value)}});
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "brightness action failed: %s", result.message.c_str());
+            ui->show_toast(result.message, false);
+            return;
+        }
+
+        ui->show_toast("Brightness updated");
+    }
+
+    static void on_update(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Update);
+    }
+
+    static void on_developer(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Developer);
+    }
+
+    static void on_network(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Network);
+    }
+
+    static void on_wifi_scan(lv_event_t* event) {
+        Impl* ui = self(event);
+        ui->onboarding_wifi_flow = false;
+        ui->navigate(ScreenId::WifiScan);
+    }
+
+    static void on_wifi_rescan(lv_event_t* event) {
+        Impl* ui = self(event);
+        if (!ui->network.request_scan()) {
+            ESP_LOGW("deos-ui", "Wi-Fi scan request rejected");
+        }
+        ui->wifi_scan_render_key.clear();
+        ui->render_wifi_scan_body();
+    }
+
+    static void on_wifi_network_selected(lv_event_t* event) {
+        Impl* ui = self(event);
+        auto* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        const auto encoded =
+            reinterpret_cast<std::uintptr_t>(lv_obj_get_user_data(target));
+        if (encoded == 0) {
+            return;
+        }
+        const std::size_t index = static_cast<std::size_t>(encoded - 1);
+        if (index >= ui->wifi_scan_entries.size()) {
+            return;
+        }
+
+        ui->wifi_selected_ssid = ui->wifi_scan_entries[index].ssid;
+        ui->wifi_selected_secured = ui->wifi_scan_entries[index].secured;
+        ui->wifi_join_error.clear();
+        ui->navigate(ScreenId::WifiCredentials);
+    }
+
+    static void on_wifi_join(lv_event_t* event) {
+        Impl* ui = self(event);
+        std::string password;
+        if (ui->wifi_selected_secured) {
+            if (ui->wifi_password_area == nullptr) {
+                return;
+            }
+            password = lv_textarea_get_text(ui->wifi_password_area);
+            if (password.size() < 8) {
+                ui->wifi_join_error = "Password must contain at least 8 characters.";
+                ui->render_screen(ScreenId::WifiCredentials);
+                return;
+            }
+        }
+
+        if (ui->onboarding_wifi_flow) {
+            if (!ui->preferences.set_setup_step(platform::SetupStep::Storage)) {
+                ui->wifi_join_error = "Could not save setup progress.";
+                ui->render_screen(ScreenId::WifiCredentials);
+                return;
+            }
+        }
+
+        const deos::ActionContext context{
+            "shell",
+            {"network.credentials"},
+        };
+        const auto result = ui->actions.invoke(
+            "network.wifi.configure",
+            context,
+            {
+                {"ssid", ui->wifi_selected_ssid},
+                {"password", password},
+            });
+
+        if (!result.ok) {
+            if (ui->onboarding_wifi_flow) {
+                (void)ui->preferences.set_setup_step(platform::SetupStep::Network);
+            }
+            ui->wifi_join_error = result.message;
+            ui->render_screen(ScreenId::WifiCredentials);
+            return;
+        }
+
+        lv_obj_t* screen = ui->begin_screen("Connecting", false);
+        lv_obj_t* message = make_label(
+            screen,
+            "Wi-Fi profile saved. DEOS is rebooting and will connect automatically.",
+            color(0xD7DEE7),
+            &lv_font_montserrat_20);
+        lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(message, 620);
+        lv_obj_set_pos(message, 48, 180);
+    }
+
+    static void on_wifi_scan_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui != nullptr) {
+            ui->render_wifi_scan_body();
+        }
+    }
+
+    static void on_forget_confirm(lv_event_t* event) {
+        self(event)->navigate(ScreenId::ForgetWifiConfirm);
+    }
+
+    static void on_forget_wifi(lv_event_t* event) {
+        Impl* ui = self(event);
+        const deos::ActionContext context{
+            "shell",
+            {"network.control"},
+        };
+        const auto result = ui->actions.invoke("network.wifi.forget", context);
+        if (result.ok) {
+            lv_obj_t* screen = ui->begin_screen("Rebooting", false);
+            lv_obj_t* message = make_label(
+                screen,
+                "Wi-Fi profile removed. DEOS is restarting without a saved network...",
+                color(0xD7DEE7),
+                &lv_font_montserrat_20);
+            lv_obj_set_pos(message, 48, 180);
+        } else {
+            ESP_LOGW("deos-ui", "forget Wi-Fi action failed: %s", result.message.c_str());
+            ui->render_screen(ScreenId::Network);
+        }
+    }
+
+    static void on_storage(lv_event_t* event) {
+        self(event)->navigate(ScreenId::Storage);
+    }
+
+    static void on_rescan_sd(lv_event_t* event) {
+        Impl* ui = self(event);
+        const deos::ActionContext context{
+            "shell",
+            {"storage.control"},
+        };
+        const auto result = ui->actions.invoke("storage.sd.rescan", context);
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "SD rescan action failed: %s", result.message.c_str());
+        }
+        ui->render_screen(ScreenId::Storage);
+        ui->show_toast(result.message, result.ok);
+    }
+
+    static void on_initialize_sd(lv_event_t* event) {
+        Impl* ui = self(event);
+        const deos::ActionContext context{
+            "shell",
+            {"storage.control"},
+        };
+        const auto result = ui->actions.invoke("storage.sd.initialize", context);
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "SD initialize action failed: %s", result.message.c_str());
+        }
+        ui->render_screen(ScreenId::Storage);
+        ui->show_toast(result.message, result.ok);
+    }
+
+    static void on_format_confirm(lv_event_t* event) {
+        self(event)->navigate(ScreenId::FormatConfirm);
+    }
+
+    static void on_format_sd(lv_event_t* event) {
+        Impl* ui = self(event);
+        const deos::ActionContext context{
+            "shell",
+            {"storage.destructive"},
+        };
+        const auto result = ui->actions.invoke("storage.sd.format", context);
+        if (!result.ok) {
+            ESP_LOGW("deos-ui", "SD format action failed: %s", result.message.c_str());
+        }
+        if (result.ok && ui->current_screen == ScreenId::FormatConfirm) {
+            ui->go_back();
+        } else {
+            ui->render_screen(ScreenId::Storage);
+        }
+        ui->show_toast(result.message, result.ok);
+    }
+
+    static void on_build_tap(lv_event_t* event) {
+        Impl* ui = self(event);
+        bool enabled_now = false;
+        if (!ui->developer_mode) {
+            ++ui->developer_taps;
+            if (ui->developer_taps >= 7) {
+                ui->developer_mode = true;
+                enabled_now = ui->preferences.set_developer_mode(true);
+            }
+        }
+        ui->render_screen(ScreenId::System);
+        if (enabled_now) {
+            ui->show_toast("Developer Mode enabled");
+        }
+    }
+
+    static void on_disable_developer(lv_event_t* event) {
+        Impl* ui = self(event);
+        ui->developer_mode = false;
+        ui->developer_taps = 0;
+        const bool saved = ui->preferences.set_developer_mode(false);
+        ui->go_back();
+        ui->show_toast(
+            saved ? "Developer Mode disabled" : "Could not save Developer Mode",
+            saved);
+    }
+
+    static void on_toast_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui == nullptr) {
+            return;
+        }
+
+        ui->toast_timer = nullptr;
+        if (ui->toast_obj != nullptr && lv_obj_is_valid(ui->toast_obj)) {
+            lv_obj_delete(ui->toast_obj);
+        }
+        ui->toast_obj = nullptr;
+    }
+
+    static void on_home_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui != nullptr) {
+            ui->refresh_home_live();
+        }
+    }
+
+    static void on_storage_timer(lv_timer_t* timer) {
+        auto* ui = static_cast<Impl*>(lv_timer_get_user_data(timer));
+        if (ui != nullptr) {
+            ui->render_storage_body();
+        }
+    }
+};
+
+ShellUi::ShellUi(lv_display_t* display,
+                 EntityRegistry& entities,
+                 ActionRegistry& actions,
+                 platform::DevicePreferences& preferences,
+                 platform::ResourceRuntime& resources,
+                 platform::NetworkController& network,
+                 platform::StorageController& storage)
+    : impl_(std::make_unique<Impl>(
+          display, entities, actions, preferences, resources, network, storage)) {}
+
+ShellUi::~ShellUi() = default;
+
+void ShellUi::create() {
+    // There is no separate onboarding shell. Device configuration lives in
+    // the normal Settings screens, so every boot lands in Home.
+    if (!impl_->preferences.setup_completed() &&
+        !impl_->preferences.set_setup_completed(true)) {
+        ESP_LOGW("deos-ui", "could not retire legacy first-run state");
+    }
+    impl_->go_home();
 }
 
 }  // namespace deos::ui

@@ -2,18 +2,41 @@ idf_component_register(
     SRCS
         "main.cpp"
         "display_controller.cpp"
-        "ui_runtime.cpp"
+        "device_preferences.cpp"
+        "i2c_runtime.cpp"
+        "network_controller.cpp"
+        "resource_runtime.cpp"
         "shell_controller.cpp"
+        "storage_controller.cpp"
+        "telemetry_service.cpp"
+        "touch_controller.cpp"
+        "ui_runtime.cpp"
         "ui_shell.cpp"
+        "update_controller.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         deos_core
         freertos
-        esp_lcd
+        app_update
+        esp_app_format
+        esp_driver_i2c
         esp_driver_ledc
+        esp_driver_sdmmc
+        esp_event
+        esp_http_server
         esp_hw_support
+        esp_lcd
+        esp_netif
+        esp_system
         esp_timer
+        esp_wifi
+        fatfs
         heap
+        nvs_flash
+        sdmmc
         lvgl
         esp_lcd_st7703
+        esp_lcd_touch_gt911
+        espressif__esp_hosted
+        espressif__mdns
 )
