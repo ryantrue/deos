@@ -153,7 +153,8 @@ extern "C" void app_main(void) {
     static auto storage_controller =
         std::make_shared<deos::platform::StorageController>(entities);
     static auto network_controller =
-        std::make_shared<deos::platform::NetworkController>(entities, actions);
+        std::make_shared<deos::platform::NetworkController>(
+            entities, actions, preferences);
     static auto touch_controller = std::make_shared<deos::platform::TouchController>();
     static auto update_controller =
         std::make_shared<deos::platform::UpdateController>(*network_controller);
