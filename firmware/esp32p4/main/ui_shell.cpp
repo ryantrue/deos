@@ -1923,7 +1923,11 @@ struct ShellUi::Impl {
             {{"value", static_cast<std::int64_t>(value)}});
         if (!result.ok) {
             ESP_LOGW("deos-ui", "brightness action failed: %s", result.message.c_str());
+            ui->show_toast(result.message, false);
+            return;
         }
+
+        ui->show_toast("Brightness updated");
     }
 
     static void on_update(lv_event_t* event) {
@@ -2074,6 +2078,7 @@ struct ShellUi::Impl {
             ESP_LOGW("deos-ui", "SD rescan action failed: %s", result.message.c_str());
         }
         ui->render_screen(ScreenId::Storage);
+        ui->show_toast(result.message, result.ok);
     }
 
     static void on_initialize_sd(lv_event_t* event) {
@@ -2087,6 +2092,7 @@ struct ShellUi::Impl {
             ESP_LOGW("deos-ui", "SD initialize action failed: %s", result.message.c_str());
         }
         ui->render_screen(ScreenId::Storage);
+        ui->show_toast(result.message, result.ok);
     }
 
     static void on_format_confirm(lv_event_t* event) {
@@ -2108,26 +2114,34 @@ struct ShellUi::Impl {
         } else {
             ui->render_screen(ScreenId::Storage);
         }
+        ui->show_toast(result.message, result.ok);
     }
 
     static void on_build_tap(lv_event_t* event) {
         Impl* ui = self(event);
+        bool enabled_now = false;
         if (!ui->developer_mode) {
             ++ui->developer_taps;
             if (ui->developer_taps >= 7) {
                 ui->developer_mode = true;
-                (void)ui->preferences.set_developer_mode(true);
+                enabled_now = ui->preferences.set_developer_mode(true);
             }
         }
         ui->render_screen(ScreenId::System);
+        if (enabled_now) {
+            ui->show_toast("Developer Mode enabled");
+        }
     }
 
     static void on_disable_developer(lv_event_t* event) {
         Impl* ui = self(event);
         ui->developer_mode = false;
         ui->developer_taps = 0;
-        (void)ui->preferences.set_developer_mode(false);
+        const bool saved = ui->preferences.set_developer_mode(false);
         ui->go_back();
+        ui->show_toast(
+            saved ? "Developer Mode disabled" : "Could not save Developer Mode",
+            saved);
     }
 
     static void on_toast_timer(lv_timer_t* timer) {
