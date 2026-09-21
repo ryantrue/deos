@@ -18,6 +18,7 @@
 #include "lvgl.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstdio>
 #include <memory>
@@ -73,6 +74,26 @@ std::string bytes_human(uint64_t bytes) {
 }  // namespace
 
 struct ShellUi::Impl {
+    enum class ScreenId {
+        Home,
+        QuickSettings,
+        Settings,
+        Ai,
+        Control,
+        Automations,
+        Apps,
+        System,
+        Display,
+        Update,
+        Developer,
+        Network,
+        ForgetWifiConfirm,
+        Storage,
+        FormatConfirm,
+    };
+
+    static constexpr std::size_t kNavigationDepth = 12;
+
     lv_display_t* display{nullptr};
     EntityRegistry& entities;
     ActionRegistry& actions;
@@ -92,6 +113,9 @@ struct ShellUi::Impl {
     std::string home_render_key;
     int developer_taps{0};
     bool developer_mode{false};
+    ScreenId current_screen{ScreenId::Home};
+    std::array<ScreenId, kNavigationDepth> navigation_stack{};
+    std::size_t navigation_depth{0};
 
     Impl(lv_display_t* display_handle,
          EntityRegistry& entity_registry,
@@ -263,11 +287,65 @@ struct ShellUi::Impl {
         return button;
     }
 
+    void render_screen(ScreenId screen) {
+        current_screen = screen;
+        switch (screen) {
+            case ScreenId::Home: show_home(); break;
+            case ScreenId::QuickSettings: show_quick_settings(); break;
+            case ScreenId::Settings: show_settings(); break;
+            case ScreenId::Ai: show_ai(); break;
+            case ScreenId::Control: show_control(); break;
+            case ScreenId::Automations: show_automations(); break;
+            case ScreenId::Apps: show_apps(); break;
+            case ScreenId::System: show_system(); break;
+            case ScreenId::Display: show_display(); break;
+            case ScreenId::Update: show_update(); break;
+            case ScreenId::Developer: show_developer(); break;
+            case ScreenId::Network: show_network(); break;
+            case ScreenId::ForgetWifiConfirm: show_forget_wifi_confirm(); break;
+            case ScreenId::Storage: show_storage(); break;
+            case ScreenId::FormatConfirm: show_format_confirm(); break;
+        }
+    }
+
+    void go_home() {
+        navigation_depth = 0;
+        render_screen(ScreenId::Home);
+    }
+
+    void navigate(ScreenId screen) {
+        if (screen == current_screen) {
+            return;
+        }
+
+        if (navigation_depth < navigation_stack.size()) {
+            navigation_stack[navigation_depth++] = current_screen;
+        } else {
+            // Keep the newest history entries if navigation becomes unexpectedly deep.
+            std::move(
+                navigation_stack.begin() + 1,
+                navigation_stack.end(),
+                navigation_stack.begin());
+            navigation_stack.back() = current_screen;
+        }
+        render_screen(screen);
+    }
+
+    void go_back() {
+        if (navigation_depth == 0) {
+            go_home();
+            return;
+        }
+
+        const ScreenId previous = navigation_stack[--navigation_depth];
+        render_screen(previous);
+    }
+
     void finish_first_run() {
         if (!preferences.set_setup_completed(true)) {
             ESP_LOGW("deos-ui", "could not persist first-run completion");
         }
-        show_home();
+        go_home();
     }
 
     void show_first_run_welcome() {
@@ -1048,7 +1126,7 @@ struct ShellUi::Impl {
         lv_obj_t* cancel = make_action(
             screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
         lv_obj_set_pos(cancel, 24, 492);
-        lv_obj_add_event_cb(cancel, on_network, LV_EVENT_CLICKED, this);
+        lv_obj_add_event_cb(cancel, on_back, LV_EVENT_CLICKED, this);
 
         lv_obj_t* forget = make_action(
             screen, "Forget and reboot", color(0x8D3039), color(0xFFFFFF), 340);
@@ -1474,7 +1552,7 @@ struct ShellUi::Impl {
         lv_obj_t* cancel = make_action(
             screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
         lv_obj_set_pos(cancel, 24, 530);
-        lv_obj_add_event_cb(cancel, on_storage, LV_EVENT_CLICKED, this);
+        lv_obj_add_event_cb(cancel, on_back, LV_EVENT_CLICKED, this);
 
         lv_obj_t* erase = make_action(
             screen, "Erase and format", color(0x9A2F39), color(0xFFFFFF), 340);
@@ -1509,43 +1587,43 @@ struct ShellUi::Impl {
     }
 
     static void on_home(lv_event_t* event) {
-        self(event)->show_home();
+        self(event)->go_home();
     }
 
     static void on_back(lv_event_t* event) {
-        self(event)->show_home();
+        self(event)->go_back();
     }
 
     static void on_quick_settings(lv_event_t* event) {
-        self(event)->show_quick_settings();
+        self(event)->navigate(ScreenId::QuickSettings);
     }
 
     static void on_settings(lv_event_t* event) {
-        self(event)->show_settings();
+        self(event)->navigate(ScreenId::Settings);
     }
 
     static void on_ai(lv_event_t* event) {
-        self(event)->show_ai();
+        self(event)->navigate(ScreenId::Ai);
     }
 
     static void on_control(lv_event_t* event) {
-        self(event)->show_control();
+        self(event)->navigate(ScreenId::Control);
     }
 
     static void on_automations(lv_event_t* event) {
-        self(event)->show_automations();
+        self(event)->navigate(ScreenId::Automations);
     }
 
     static void on_apps(lv_event_t* event) {
-        self(event)->show_apps();
+        self(event)->navigate(ScreenId::Apps);
     }
 
     static void on_system(lv_event_t* event) {
-        self(event)->show_system();
+        self(event)->navigate(ScreenId::System);
     }
 
     static void on_display(lv_event_t* event) {
-        self(event)->show_display();
+        self(event)->navigate(ScreenId::Display);
     }
 
     static void on_brightness_value(lv_event_t* event) {
@@ -1578,19 +1656,19 @@ struct ShellUi::Impl {
     }
 
     static void on_update(lv_event_t* event) {
-        self(event)->show_update();
+        self(event)->navigate(ScreenId::Update);
     }
 
     static void on_developer(lv_event_t* event) {
-        self(event)->show_developer();
+        self(event)->navigate(ScreenId::Developer);
     }
 
     static void on_network(lv_event_t* event) {
-        self(event)->show_network();
+        self(event)->navigate(ScreenId::Network);
     }
 
     static void on_forget_confirm(lv_event_t* event) {
-        self(event)->show_forget_wifi_confirm();
+        self(event)->navigate(ScreenId::ForgetWifiConfirm);
     }
 
     static void on_forget_wifi(lv_event_t* event) {
@@ -1610,12 +1688,12 @@ struct ShellUi::Impl {
             lv_obj_set_pos(message, 48, 180);
         } else {
             ESP_LOGW("deos-ui", "forget Wi-Fi action failed: %s", result.message.c_str());
-            ui->show_network();
+            ui->render_screen(ScreenId::Network);
         }
     }
 
     static void on_storage(lv_event_t* event) {
-        self(event)->show_storage();
+        self(event)->navigate(ScreenId::Storage);
     }
 
     static void on_rescan_sd(lv_event_t* event) {
@@ -1628,7 +1706,7 @@ struct ShellUi::Impl {
         if (!result.ok) {
             ESP_LOGW("deos-ui", "SD rescan action failed: %s", result.message.c_str());
         }
-        ui->show_storage();
+        ui->render_screen(ScreenId::Storage);
     }
 
     static void on_initialize_sd(lv_event_t* event) {
@@ -1641,11 +1719,11 @@ struct ShellUi::Impl {
         if (!result.ok) {
             ESP_LOGW("deos-ui", "SD initialize action failed: %s", result.message.c_str());
         }
-        ui->show_storage();
+        ui->render_screen(ScreenId::Storage);
     }
 
     static void on_format_confirm(lv_event_t* event) {
-        self(event)->show_format_confirm();
+        self(event)->navigate(ScreenId::FormatConfirm);
     }
 
     static void on_format_sd(lv_event_t* event) {
@@ -1658,7 +1736,11 @@ struct ShellUi::Impl {
         if (!result.ok) {
             ESP_LOGW("deos-ui", "SD format action failed: %s", result.message.c_str());
         }
-        ui->show_storage();
+        if (result.ok && ui->current_screen == ScreenId::FormatConfirm) {
+            ui->go_back();
+        } else {
+            ui->render_screen(ScreenId::Storage);
+        }
     }
 
     static void on_build_tap(lv_event_t* event) {
@@ -1670,7 +1752,7 @@ struct ShellUi::Impl {
                 (void)ui->preferences.set_developer_mode(true);
             }
         }
-        ui->show_system();
+        ui->render_screen(ScreenId::System);
     }
 
     static void on_disable_developer(lv_event_t* event) {
@@ -1678,7 +1760,7 @@ struct ShellUi::Impl {
         ui->developer_mode = false;
         ui->developer_taps = 0;
         (void)ui->preferences.set_developer_mode(false);
-        ui->show_settings();
+        ui->go_back();
     }
 
     static void on_home_timer(lv_timer_t* timer) {
@@ -1710,7 +1792,7 @@ ShellUi::~ShellUi() = default;
 
 void ShellUi::create() {
     if (impl_->preferences.setup_completed()) {
-        impl_->show_home();
+        impl_->go_home();
     } else {
         impl_->show_first_run_welcome();
     }
