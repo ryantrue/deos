@@ -195,6 +195,71 @@ def print_json_response(payload: bytes) -> None:
     print(json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def parse_action_arg(value: str) -> tuple[str, Any]:
+    if "=" not in value:
+        raise SystemExit(f"action argument must be key=value: {value}")
+    key, raw = value.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise SystemExit("action argument key must not be empty")
+    raw = raw.strip()
+    if not raw:
+        return key, ""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = raw
+    if not isinstance(parsed, (bool, int, float, str)):
+        raise SystemExit(f"action argument must be a scalar JSON value: {key}")
+    return key, parsed
+
+
+def command_entities(args: argparse.Namespace) -> int:
+    payload = remote_request(
+        args.device,
+        "/api/v1/entities",
+        token=resolve_token(args.token),
+    )
+    print_json_response(payload)
+    return 0
+
+
+def command_actions(args: argparse.Namespace) -> int:
+    payload = remote_request(
+        args.device,
+        "/api/v1/actions",
+        token=resolve_token(args.token),
+    )
+    print_json_response(payload)
+    return 0
+
+
+def command_invoke(args: argparse.Namespace) -> int:
+    values: dict[str, Any] = {}
+    for item in args.arg:
+        key, value = parse_action_arg(item)
+        if key in values:
+            raise SystemExit(f"duplicate action argument: {key}")
+        values[key] = value
+
+    body = json.dumps(
+        {"id": args.action_id, "args": values},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    payload = remote_request(
+        args.device,
+        "/api/v1/action",
+        method="POST",
+        token=resolve_token(args.token),
+        body=body,
+        content_type="application/json",
+    )
+    print_json_response(payload)
+    return 0
+
+
 def command_status(args: argparse.Namespace) -> int:
     payload = remote_request(args.device, "/api/v1/status")
     print_json_response(payload)
@@ -303,6 +368,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="read live device status over LAN")
     p_status.add_argument("--device", default="http://deos.local")
     p_status.set_defaults(func=command_status)
+
+    p_entities = sub.add_parser("entities", help="list typed device state entities")
+    p_entities.add_argument("--device", default="http://deos.local")
+    p_entities.add_argument("--token", help="API token; defaults to DEOS_TOKEN")
+    p_entities.set_defaults(func=command_entities)
+
+    p_actions = sub.add_parser("actions", help="list remotely visible actions")
+    p_actions.add_argument("--device", default="http://deos.local")
+    p_actions.add_argument("--token", help="API token; defaults to DEOS_TOKEN")
+    p_actions.set_defaults(func=command_actions)
+
+    p_invoke = sub.add_parser("invoke", help="invoke a capability-gated device action")
+    p_invoke.add_argument("action_id")
+    p_invoke.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="scalar action argument; VALUE accepts JSON booleans/numbers/strings",
+    )
+    p_invoke.add_argument("--device", default="http://deos.local")
+    p_invoke.add_argument("--token", help="API token; defaults to DEOS_TOKEN")
+    p_invoke.set_defaults(func=command_invoke)
 
     p_reboot = sub.add_parser("reboot", help="reboot a DEOS device over LAN")
     p_reboot.add_argument("--device", default="http://deos.local")
