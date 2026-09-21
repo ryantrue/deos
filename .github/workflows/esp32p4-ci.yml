@@ -15,6 +15,9 @@ on:
       - ".github/workflows/esp32p4-ci.yml"
 
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -27,6 +30,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build ESP32-P4 bootstrap with ESP-IDF 6.1
+        env:
+          DEOS_DEV_WIFI_SSID: ${{ secrets.DEOS_DEV_WIFI_SSID }}
+          DEOS_DEV_WIFI_PASSWORD: ${{ secrets.DEOS_DEV_WIFI_PASSWORD }}
+          DEOS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.1
