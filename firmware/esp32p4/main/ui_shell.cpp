@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "ui_shell.hpp"
+#include "ui_navigation.hpp"
 
 #include "device_preferences.hpp"
 #include "network_controller.hpp"
@@ -18,7 +19,6 @@
 #include "lvgl.h"
 
 #include <algorithm>
-#include <array>
 #include <cstdlib>
 #include <cstdio>
 #include <cstdint>
@@ -76,32 +76,6 @@ std::string bytes_human(uint64_t bytes) {
 }  // namespace
 
 struct ShellUi::Impl {
-    enum class ScreenId {
-        FirstRunWelcome,
-        FirstRunNetwork,
-        FirstRunStorage,
-        FirstRunReady,
-        Home,
-        QuickSettings,
-        Settings,
-        Ai,
-        Control,
-        Automations,
-        Apps,
-        System,
-        Display,
-        Update,
-        Developer,
-        Network,
-        WifiScan,
-        WifiCredentials,
-        ForgetWifiConfirm,
-        Storage,
-        FormatConfirm,
-    };
-
-    static constexpr std::size_t kNavigationDepth = 12;
-
     lv_display_t* display{nullptr};
     EntityRegistry& entities;
     ActionRegistry& actions;
@@ -132,9 +106,7 @@ struct ShellUi::Impl {
     std::vector<platform::WifiScanEntry> wifi_scan_entries;
     int developer_taps{0};
     bool developer_mode{false};
-    ScreenId current_screen{ScreenId::Home};
-    std::array<ScreenId, kNavigationDepth> navigation_stack{};
-    std::size_t navigation_depth{0};
+    Navigator navigator{};
 
     Impl(lv_display_t* display_handle,
          EntityRegistry& entity_registry,
@@ -154,33 +126,6 @@ struct ShellUi::Impl {
 
     ~Impl() {
         stop_storage_timer();
-    }
-
-    static const char* screen_name(ScreenId screen) {
-        switch (screen) {
-            case ScreenId::FirstRunWelcome: return "FirstRunWelcome";
-            case ScreenId::FirstRunNetwork: return "FirstRunNetwork";
-            case ScreenId::FirstRunStorage: return "FirstRunStorage";
-            case ScreenId::FirstRunReady: return "FirstRunReady";
-            case ScreenId::Home: return "Home";
-            case ScreenId::QuickSettings: return "QuickSettings";
-            case ScreenId::Settings: return "Settings";
-            case ScreenId::Ai: return "AI";
-            case ScreenId::Control: return "Control";
-            case ScreenId::Automations: return "Automations";
-            case ScreenId::Apps: return "Apps";
-            case ScreenId::System: return "System";
-            case ScreenId::Display: return "Display";
-            case ScreenId::Update: return "Update";
-            case ScreenId::Developer: return "Developer";
-            case ScreenId::Network: return "Network";
-            case ScreenId::WifiScan: return "WifiScan";
-            case ScreenId::WifiCredentials: return "WifiCredentials";
-            case ScreenId::ForgetWifiConfirm: return "ForgetWifiConfirm";
-            case ScreenId::Storage: return "Storage";
-            case ScreenId::FormatConfirm: return "FormatConfirm";
-        }
-        return "Unknown";
     }
 
     void stop_storage_timer() {
@@ -388,7 +333,6 @@ struct ShellUi::Impl {
 
     void render_screen(ScreenId screen) {
         ESP_LOGI("deos-ui", "screen: %s", screen_name(screen));
-        current_screen = screen;
         switch (screen) {
             case ScreenId::FirstRunWelcome: show_first_run_welcome(); break;
             case ScreenId::FirstRunNetwork: show_first_run_network(); break;
@@ -421,36 +365,17 @@ struct ShellUi::Impl {
     }
 
     void go_home() {
-        navigation_depth = 0;
-        render_screen(ScreenId::Home);
+        render_screen(navigator.home());
     }
 
     void navigate(ScreenId screen) {
-        if (screen == current_screen) {
-            return;
+        if (navigator.navigate(screen)) {
+            render_screen(navigator.current());
         }
-
-        if (navigation_depth < navigation_stack.size()) {
-            navigation_stack[navigation_depth++] = current_screen;
-        } else {
-            // Keep the newest history entries if navigation becomes unexpectedly deep.
-            std::move(
-                navigation_stack.begin() + 1,
-                navigation_stack.end(),
-                navigation_stack.begin());
-            navigation_stack.back() = current_screen;
-        }
-        render_screen(screen);
     }
 
     void go_back() {
-        if (navigation_depth == 0) {
-            go_home();
-            return;
-        }
-
-        const ScreenId previous = navigation_stack[--navigation_depth];
-        render_screen(previous);
+        render_screen(navigator.back());
     }
 
     void finish_first_run() {
@@ -2103,7 +2028,7 @@ struct ShellUi::Impl {
         if (!result.ok) {
             ESP_LOGW("deos-ui", "SD format action failed: %s", result.message.c_str());
         }
-        if (result.ok && ui->current_screen == ScreenId::FormatConfirm) {
+        if (result.ok && ui->navigator.current() == ScreenId::FormatConfirm) {
             ui->go_back();
         } else {
             ui->render_screen(ScreenId::Storage);
