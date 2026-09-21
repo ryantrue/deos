@@ -114,6 +114,17 @@ extern "C" void app_main(void) {
             std::string(""));
     }
 
+    static auto system_controller = std::make_shared<SystemController>();
+    static auto display_controller =
+        std::make_shared<deos::platform::DisplayController>(preferences);
+    static auto storage_controller =
+        std::make_shared<deos::platform::StorageController>(entities);
+    static auto network_controller =
+        std::make_shared<deos::platform::NetworkController>(entities);
+    static auto touch_controller = std::make_shared<deos::platform::TouchController>();
+    static auto update_controller =
+        std::make_shared<deos::platform::UpdateController>(*network_controller);
+
     if (actions.size() == 0) {
         (void)actions.register_action(
             {
@@ -142,21 +153,81 @@ extern "C" void app_main(void) {
                 }
 
                 (void)entities.set("display.brightness", *value);
+                return {true, "brightness updated", {{"value", *value}}};
+            });
+
+        (void)actions.register_action(
+            {
+                "storage.sd.rescan",
+                "Rescan SD card",
+                "Probe the SDMMC slot without modifying card contents",
+                "storage.control",
+                {},
+            },
+            [](const deos::StateValues&) -> deos::ActionResult {
+                const bool accepted = storage_controller->request_rescan();
                 return {
-                    true,
-                    "brightness updated",
-                    {{"value", *value}},
+                    accepted,
+                    accepted ? "SD rescan started" : "SD rescan is not available in current state",
+                    {},
+                };
+            });
+
+        (void)actions.register_action(
+            {
+                "storage.sd.initialize",
+                "Initialize SD card for DEOS",
+                "Create the DEOS directory layout without deleting existing files",
+                "storage.control",
+                {},
+            },
+            [](const deos::StateValues&) -> deos::ActionResult {
+                const bool accepted = storage_controller->request_initialize_for_deos();
+                return {
+                    accepted,
+                    accepted ? "DEOS directory initialization started"
+                             : "SD initialization is not available in current state",
+                    {},
+                };
+            });
+
+        (void)actions.register_action(
+            {
+                "storage.sd.format",
+                "Format SD card for DEOS",
+                "Erase the SD card, create a canonical partition/filesystem and initialize DEOS directories",
+                "storage.destructive",
+                {},
+            },
+            [](const deos::StateValues&) -> deos::ActionResult {
+                const bool accepted = storage_controller->request_format_for_deos();
+                return {
+                    accepted,
+                    accepted ? "SD format started"
+                             : "SD format is not available in current state",
+                    {},
+                };
+            });
+
+        (void)actions.register_action(
+            {
+                "network.wifi.forget",
+                "Forget Wi-Fi profile",
+                "Remove the saved Wi-Fi profile and reboot into provisioning",
+                "network.control",
+                {},
+            },
+            [](const deos::StateValues&) -> deos::ActionResult {
+                const bool accepted = network_controller->forget_wifi_and_reboot();
+                return {
+                    accepted,
+                    accepted ? "Wi-Fi profile removed; reboot scheduled"
+                             : "Wi-Fi profile cannot be removed in current state",
+                    {},
                 };
             });
     }
 
-    static auto system_controller = std::make_shared<SystemController>();
-    static auto display_controller =
-        std::make_shared<deos::platform::DisplayController>(preferences);
-    static auto storage_controller =
-        std::make_shared<deos::platform::StorageController>(entities);
-    static auto network_controller =
-        std::make_shared<deos::platform::NetworkController>(entities);
     static auto shell_controller =
         std::make_shared<deos::platform::ShellController>(
             entities,
@@ -165,9 +236,6 @@ extern "C" void app_main(void) {
             resource_runtime,
             *network_controller,
             *storage_controller);
-    static auto touch_controller = std::make_shared<deos::platform::TouchController>();
-    static auto update_controller =
-        std::make_shared<deos::platform::UpdateController>(*network_controller);
 
     engine.register_controller(system_controller);
     engine.register_controller(display_controller);
