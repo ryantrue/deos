@@ -2,6 +2,8 @@
 
 #include "ui_shell.hpp"
 #include "ui_navigation.hpp"
+#include "ui_theme.hpp"
+#include "ui_widgets.hpp"
 
 #include "device_preferences.hpp"
 #include "network_controller.hpp"
@@ -29,38 +31,15 @@
 namespace deos::ui {
 namespace {
 
-constexpr int kScreen = 720;
-constexpr int kMargin = 24;
-constexpr int kGap = 12;
-constexpr int kHeaderHeight = 104;
-constexpr int kTileHeight = 146;
-constexpr int kRadius = 24;
-
-lv_color_t color(uint32_t rgb) {
-    return lv_color_hex(rgb);
-}
-
-lv_obj_t* make_label(lv_obj_t* parent,
-                     const char* text,
-                     lv_color_t text_color,
-                     const lv_font_t* font = LV_FONT_DEFAULT) {
-    lv_obj_t* obj = lv_label_create(parent);
-    lv_label_set_text(obj, text);
-    lv_obj_set_style_text_color(obj, text_color, 0);
-    lv_obj_set_style_text_font(obj, font, 0);
-    return obj;
-}
-
-void set_panel_style(lv_obj_t* obj,
-                     lv_color_t bg = color(0x15191F),
-                     lv_color_t border = color(0x292F38)) {
-    lv_obj_set_style_bg_color(obj, bg, 0);
-    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(obj, 1, 0);
-    lv_obj_set_style_border_color(obj, border, 0);
-    lv_obj_set_style_radius(obj, kRadius, 0);
-    lv_obj_set_style_pad_all(obj, 18, 0);
-}
+using theme::color;
+using theme::kGap;
+using theme::kHeaderHeight;
+using theme::kMargin;
+using theme::kScreen;
+using widgets::action;
+using widgets::label;
+using widgets::settings_row;
+using widgets::tile;
 
 std::string bytes_human(uint64_t bytes) {
     char buffer[32]{};
@@ -183,11 +162,11 @@ struct ShellUi::Impl {
             lv_obj_set_style_border_color(back, color(0x2A313A), 0);
             lv_obj_add_event_cb(back, on_back, LV_EVENT_CLICKED, this);
 
-            lv_obj_t* arrow = make_label(back, "<", color(0xF5F7FA), &lv_font_montserrat_28);
+            lv_obj_t* arrow = label(back, "<", color(0xF5F7FA), &lv_font_montserrat_28);
             lv_obj_center(arrow);
         }
 
-        lv_obj_t* heading = make_label(screen, title, color(0xF5F7FA), &lv_font_montserrat_28);
+        lv_obj_t* heading = label(screen, title, color(0xF5F7FA), &lv_font_montserrat_28);
         lv_obj_set_pos(heading, show_back ? 120 : kMargin, 23);
 
         const platform::NetworkSnapshot net = network.snapshot();
@@ -210,80 +189,10 @@ struct ShellUi::Impl {
         lv_obj_set_style_transform_scale(local, 248, LV_STATE_PRESSED);
         lv_obj_add_event_cb(local, on_quick_settings, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* local_text = make_label(local, status_text, status_fg);
+        lv_obj_t* local_text = label(local, status_text, status_fg);
         lv_obj_center(local_text);
 
         return screen;
-    }
-
-    lv_obj_t* make_tile(lv_obj_t* parent,
-                        int x,
-                        int y,
-                        int width,
-                        const char* title,
-                        const char* subtitle,
-                        lv_color_t bg,
-                        lv_color_t border) {
-        lv_obj_t* tile = lv_button_create(parent);
-        lv_obj_set_pos(tile, x, y);
-        lv_obj_set_size(tile, width, kTileHeight);
-        set_panel_style(tile, bg, border);
-        lv_obj_set_style_shadow_width(tile, 0, 0);
-        lv_obj_set_style_transform_scale(tile, 248, LV_STATE_PRESSED);
-
-        lv_obj_t* title_label = make_label(tile, title, color(0xF5F7FA), &lv_font_montserrat_20);
-        lv_obj_set_pos(title_label, 0, 0);
-
-        lv_obj_t* subtitle_label = make_label(tile, subtitle, color(0x8E99A6));
-        lv_obj_set_pos(subtitle_label, 0, 36);
-        return tile;
-    }
-
-    lv_obj_t* make_row(lv_obj_t* parent,
-                       const char* title,
-                       const char* subtitle,
-                       bool enabled = true) {
-        lv_obj_t* row = enabled ? lv_button_create(parent) : lv_obj_create(parent);
-        lv_obj_set_width(row, 652);
-        lv_obj_set_height(row, 86);
-        set_panel_style(row, color(0x12161C), color(0x262C34));
-        lv_obj_set_style_pad_all(row, 14, 0);
-        if (enabled) {
-            lv_obj_set_style_shadow_width(row, 0, 0);
-            lv_obj_set_style_transform_scale(row, 250, LV_STATE_PRESSED);
-        }
-
-        lv_obj_t* title_label = make_label(
-            row, title, enabled ? color(0xF5F7FA) : color(0x6E7884), &lv_font_montserrat_20);
-        lv_obj_set_pos(title_label, 0, 0);
-
-        lv_obj_t* subtitle_label = make_label(
-            row, subtitle, enabled ? color(0x87929F) : color(0x555E69));
-        lv_obj_set_pos(subtitle_label, 0, 34);
-
-        if (enabled) {
-            lv_obj_t* chevron = make_label(row, ">", color(0x626D79), &lv_font_montserrat_20);
-            lv_obj_align(chevron, LV_ALIGN_RIGHT_MID, 0, 0);
-        }
-        return row;
-    }
-
-    lv_obj_t* make_action(lv_obj_t* parent,
-                          const char* text,
-                          lv_color_t bg,
-                          lv_color_t fg,
-                          int width = 296) {
-        lv_obj_t* button = lv_button_create(parent);
-        lv_obj_set_size(button, width, 58);
-        lv_obj_set_style_bg_color(button, bg, 0);
-        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(button, 0, 0);
-        lv_obj_set_style_radius(button, 20, 0);
-        lv_obj_set_style_shadow_width(button, 0, 0);
-        lv_obj_set_style_transform_scale(button, 248, LV_STATE_PRESSED);
-        lv_obj_t* label = make_label(button, text, fg, &lv_font_montserrat_20);
-        lv_obj_center(label);
-        return button;
     }
 
     void dismiss_toast() {
@@ -315,7 +224,7 @@ struct ShellUi::Impl {
         lv_obj_set_style_radius(toast_obj, 22, 0);
         lv_obj_set_style_pad_all(toast_obj, 16, 0);
 
-        lv_obj_t* text = make_label(
+        lv_obj_t* text = label(
             toast_obj,
             message.c_str(),
             success ? color(0xBDE8CF) : color(0xF3BEC3),
@@ -389,14 +298,14 @@ struct ShellUi::Impl {
         lv_obj_t* hero = lv_obj_create(screen);
         lv_obj_set_pos(hero, 24, 120);
         lv_obj_set_size(hero, 672, 360);
-        set_panel_style(hero, color(0x111A25), color(0x294D73));
+        theme::apply_panel(hero, color(0x111A25), color(0x294D73));
         lv_obj_set_style_pad_all(hero, 30, 0);
 
-        lv_obj_t* title = make_label(
+        lv_obj_t* title = label(
             hero, "DEOS is ready.", color(0xF5F8FB), &lv_font_montserrat_28);
         lv_obj_set_pos(title, 0, 0);
 
-        lv_obj_t* body = make_label(
+        lv_obj_t* body = label(
             hero,
             "This device works locally first. Network, SD storage and AI are optional.\n\n"
             "Setup takes only a few steps and never formats removable media automatically.",
@@ -405,23 +314,23 @@ struct ShellUi::Impl {
         lv_obj_set_width(body, 610);
         lv_obj_set_pos(body, 0, 62);
 
-        lv_obj_t* model = make_label(
+        lv_obj_t* model = label(
             hero,
             "Local device  /  Optional network  /  Optional AI  /  Explicit actions",
             color(0x71A9E8));
         lv_obj_set_pos(model, 0, 250);
 
-        lv_obj_t* start = make_action(
+        lv_obj_t* start = action(
             screen, "Start setup", color(0x2B6FC2), color(0xFFFFFF), 420);
         lv_obj_set_pos(start, 276, 528);
         lv_obj_add_event_cb(start, on_first_run_network, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* skip = make_action(
+        lv_obj_t* skip = action(
             screen, "Use now", color(0x20252D), color(0xDCE3EA), 232);
         lv_obj_set_pos(skip, 24, 528);
         lv_obj_add_event_cb(skip, on_first_run_finish, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* note = make_label(
+        lv_obj_t* note = label(
             screen,
             "Everything shown here remains available later in Settings.",
             color(0x66727F));
@@ -435,16 +344,16 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 116);
         lv_obj_set_size(card, 672, 410);
-        set_panel_style(card, color(0x11151A), color(0x28313B));
+        theme::apply_panel(card, color(0x11151A), color(0x28313B));
         lv_obj_set_style_pad_all(card, 28, 0);
 
         if (!net.initialized) {
-            lv_obj_t* title = make_label(
+            lv_obj_t* title = label(
                 card, "Network service is starting.", color(0xE1C876),
                 &lv_font_montserrat_28);
             lv_obj_set_pos(title, 0, 0);
 
-            lv_obj_t* body = make_label(
+            lv_obj_t* body = label(
                 card,
                 "DEOS does not require Wi-Fi to boot. You can continue now and configure "
                 "networking later from Settings.",
@@ -453,27 +362,27 @@ struct ShellUi::Impl {
             lv_obj_set_width(body, 610);
             lv_obj_set_pos(body, 0, 70);
         } else if (net.provisioning) {
-            lv_obj_t* title = make_label(
+            lv_obj_t* title = label(
                 card, "Connect DEOS to Wi-Fi", color(0xF2F5F8),
                 &lv_font_montserrat_28);
             lv_obj_set_pos(title, 0, 0);
 
-            lv_obj_t* intro = make_label(
+            lv_obj_t* intro = label(
                 card,
                 "From a phone or computer, join:",
                 color(0x8F9BA8));
             lv_obj_set_pos(intro, 0, 62);
 
-            lv_obj_t* ssid = make_label(
+            lv_obj_t* ssid = label(
                 card, net.setup_ssid.c_str(), color(0x73AFFF),
                 &lv_font_montserrat_28);
             lv_obj_set_pos(ssid, 0, 102);
 
             const std::string pass = "Password: " + net.setup_password;
-            lv_obj_t* password = make_label(card, pass.c_str(), color(0xD7DEE7));
+            lv_obj_t* password = label(card, pass.c_str(), color(0xD7DEE7));
             lv_obj_set_pos(password, 0, 154);
 
-            lv_obj_t* steps = make_label(
+            lv_obj_t* steps = label(
                 card,
                 "Then open http://192.168.4.1/ and enter the Wi-Fi network DEOS should use.\n\n"
                 "The Wi-Fi password is stored only in device NVS.",
@@ -482,7 +391,7 @@ struct ShellUi::Impl {
             lv_obj_set_width(steps, 610);
             lv_obj_set_pos(steps, 0, 208);
         } else {
-            lv_obj_t* title = make_label(
+            lv_obj_t* title = label(
                 card,
                 net.connected ? "Network connected" : "Network configured",
                 net.connected ? color(0x74D89F) : color(0xE1C876),
@@ -491,33 +400,33 @@ struct ShellUi::Impl {
 
             const std::string wifi_text =
                 std::string("Wi-Fi:  ") + (net.ssid.empty() ? "configured" : net.ssid);
-            lv_obj_t* wifi = make_label(card, wifi_text.c_str(), color(0xC8D1DA));
+            lv_obj_t* wifi = label(card, wifi_text.c_str(), color(0xC8D1DA));
             lv_obj_set_pos(wifi, 0, 78);
 
             const std::string ip_text =
                 std::string("IP:  ") + (net.ip.empty() ? "waiting for DHCP" : net.ip);
-            lv_obj_t* ip = make_label(card, ip_text.c_str(), color(0xC8D1DA));
+            lv_obj_t* ip = label(card, ip_text.c_str(), color(0xC8D1DA));
             lv_obj_set_pos(ip, 0, 120);
 
-            lv_obj_t* local_name = make_label(
+            lv_obj_t* local_name = label(
                 card, "Local name:  deos.local", color(0x8E99A6));
             lv_obj_set_pos(local_name, 0, 162);
         }
 
         if (net.initialized) {
-            lv_obj_t* choose = make_action(
+            lv_obj_t* choose = action(
                 screen, "Choose Wi-Fi here", color(0x245BA5), color(0xFFFFFF), 672);
             lv_obj_set_pos(choose, 24, 536);
             lv_obj_add_event_cb(
                 choose, on_first_run_wifi_scan, LV_EVENT_CLICKED, this);
         }
 
-        lv_obj_t* later = make_action(
+        lv_obj_t* later = action(
             screen, "Skip network", color(0x20252D), color(0xDCE3EA), 232);
         lv_obj_set_pos(later, 24, 610);
         lv_obj_add_event_cb(later, on_first_run_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* next = make_action(
+        lv_obj_t* next = action(
             screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 420);
         lv_obj_set_pos(next, 276, 610);
         lv_obj_add_event_cb(next, on_first_run_storage, LV_EVENT_CLICKED, this);
@@ -530,10 +439,10 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 116);
         lv_obj_set_size(card, 672, 410);
-        set_panel_style(card, color(0x11151A), color(0x353426));
+        theme::apply_panel(card, color(0x11151A), color(0x353426));
         lv_obj_set_style_pad_all(card, 28, 0);
 
-        lv_obj_t* title = make_label(
+        lv_obj_t* title = label(
             card,
             "SD card is optional",
             color(0xF2F5F8),
@@ -542,7 +451,7 @@ struct ShellUi::Impl {
 
         const std::string state_text =
             std::string("Detected state: ") + platform::to_string(sd.state);
-        lv_obj_t* state = make_label(
+        lv_obj_t* state = label(
             card,
             state_text.c_str(),
             sd.state == platform::SdVolumeState::Ready
@@ -551,7 +460,7 @@ struct ShellUi::Impl {
             &lv_font_montserrat_20);
         lv_obj_set_pos(state, 0, 62);
 
-        lv_obj_t* policy = make_label(
+        lv_obj_t* policy = label(
             card,
             "DEOS never formats removable media because mounting failed.\n\n"
             "Readable foreign cards can be left untouched or initialized by creating "
@@ -562,12 +471,12 @@ struct ShellUi::Impl {
         lv_obj_set_width(policy, 610);
         lv_obj_set_pos(policy, 0, 112);
 
-        lv_obj_t* review = make_action(
+        lv_obj_t* review = action(
             card, "Review SD card", color(0x34301D), color(0xE7D88C), 610);
         lv_obj_set_pos(review, 0, 316);
         lv_obj_add_event_cb(review, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* next = make_action(
+        lv_obj_t* next = action(
             screen, "Continue", color(0x2B6FC2), color(0xFFFFFF), 672);
         lv_obj_set_pos(next, 24, 568);
         lv_obj_add_event_cb(next, on_first_run_done, LV_EVENT_CLICKED, this);
@@ -579,17 +488,17 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 132);
         lv_obj_set_size(card, 672, 360);
-        set_panel_style(card, color(0x122018), color(0x285B3E));
+        theme::apply_panel(card, color(0x122018), color(0x285B3E));
         lv_obj_set_style_pad_all(card, 30, 0);
 
-        lv_obj_t* title = make_label(
+        lv_obj_t* title = label(
             card,
             "Your DEOS device is ready.",
             color(0xF1F8F4),
             &lv_font_montserrat_28);
         lv_obj_set_pos(title, 0, 0);
 
-        lv_obj_t* body = make_label(
+        lv_obj_t* body = label(
             card,
             "Home stays useful without cloud services or AI. Add integrations, models, "
             "automations and apps as you need them.\n\n"
@@ -599,7 +508,7 @@ struct ShellUi::Impl {
         lv_obj_set_width(body, 610);
         lv_obj_set_pos(body, 0, 72);
 
-        lv_obj_t* home = make_action(
+        lv_obj_t* home = action(
             screen, "Enter Home", color(0x297B4D), color(0xFFFFFF), 672);
         lv_obj_set_pos(home, 24, 548);
         lv_obj_add_event_cb(home, on_first_run_finish, LV_EVENT_CLICKED, this);
@@ -691,7 +600,7 @@ struct ShellUi::Impl {
     void show_home() {
         lv_obj_t* screen = begin_screen("Home", false);
 
-        lv_obj_t* intro = make_label(
+        lv_obj_t* intro = label(
             screen,
             "Device status and controls",
             color(0x75808D));
@@ -700,27 +609,27 @@ struct ShellUi::Impl {
         constexpr int col = 216;
         constexpr int wide = 444;
 
-        lv_obj_t* system = make_tile(
+        lv_obj_t* system = tile(
             screen, kMargin, 112, 672, "This device", "Local system status",
             color(0x14243B), color(0x285887));
-        home_system_value_label = make_label(
+        home_system_value_label = label(
             system, "STARTING", color(0xE1C777), &lv_font_montserrat_20);
         lv_obj_set_pos(home_system_value_label, 0, 84);
         lv_obj_add_event_cb(system, on_system, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* settings = make_tile(
+        lv_obj_t* settings = tile(
             screen, kMargin, 270, wide, "Settings", "Network, display and storage",
             color(0x17251F), color(0x28573F));
-        home_settings_value_label = make_label(
+        home_settings_value_label = label(
             settings, "Loading device state...", color(0x9EE2BB));
         lv_obj_set_pos(home_settings_value_label, 0, 84);
         lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
 
         const auto sd = storage.snapshot();
-        lv_obj_t* files = make_tile(
+        lv_obj_t* files = tile(
             screen, 480, 270, col, "Storage", "Internal and SD",
             color(0x202117), color(0x55562A));
-        home_storage_value_label = make_label(
+        home_storage_value_label = label(
             files,
             platform::to_string(sd.state),
             sd.state == platform::SdVolumeState::Ready
@@ -729,28 +638,28 @@ struct ShellUi::Impl {
         lv_obj_set_pos(home_storage_value_label, 0, 84);
         lv_obj_add_event_cb(files, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* control = make_tile(
+        lv_obj_t* control = tile(
             screen, kMargin, 428, col, "Control", "State and actions",
             color(0x171B21), color(0x2A3039));
         const std::string model_count =
             std::to_string(entities.size()) + " states / " +
             std::to_string(actions.size()) + " actions";
         home_control_value_label =
-            make_label(control, model_count.c_str(), color(0xA9B1BA));
+            label(control, model_count.c_str(), color(0xA9B1BA));
         lv_obj_set_pos(home_control_value_label, 0, 84);
         lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* apps = make_tile(
+        lv_obj_t* apps = tile(
             screen, 252, 428, col, "Apps", "Device applications",
             color(0x1D1C1B), color(0x343330));
-        lv_obj_t* app_count = make_label(apps, "Open app list", color(0xA9B1BA));
+        lv_obj_t* app_count = label(apps, "Open app list", color(0xA9B1BA));
         lv_obj_set_pos(app_count, 0, 84);
         lv_obj_add_event_cb(apps, on_apps, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* ai = make_tile(
+        lv_obj_t* ai = tile(
             screen, 480, 428, col, "AI", "Optional service",
             color(0x171B21), color(0x2A3039));
-        lv_obj_t* ai_hint = make_label(ai, "Not configured", color(0x8C97A4));
+        lv_obj_t* ai_hint = label(ai, "Not configured", color(0x8C97A4));
         lv_obj_set_pos(ai_hint, 0, 84);
         lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
 
@@ -758,7 +667,7 @@ struct ShellUi::Impl {
         lv_obj_set_pos(dock, kMargin, 610);
         lv_obj_set_size(dock, 672, 82);
         lv_obj_remove_flag(dock, LV_OBJ_FLAG_SCROLLABLE);
-        set_panel_style(dock, color(0x10141A), color(0x242A32));
+        theme::apply_panel(dock, color(0x10141A), color(0x242A32));
         lv_obj_set_style_pad_all(dock, 10, 0);
 
         const char* dock_labels[] = {"HOME", "CONTROL", "APPS", "SETTINGS"};
@@ -769,7 +678,7 @@ struct ShellUi::Impl {
             lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(item, 0, 0);
             lv_obj_set_style_shadow_width(item, 0, 0);
-            lv_obj_t* text = make_label(
+            lv_obj_t* text = label(
                 item,
                 dock_labels[i],
                 i == 0 ? color(0xF5F7FA) : color(0x697481));
@@ -801,17 +710,17 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 126);
         lv_obj_set_size(card, 672, 430);
-        set_panel_style(card, color(0x11151A), color(0x262C34));
+        theme::apply_panel(card, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(card, 28, 0);
 
-        lv_obj_t* state = make_label(card, status, accent, &lv_font_montserrat_20);
+        lv_obj_t* state = label(card, status, accent, &lv_font_montserrat_20);
         lv_obj_set_pos(state, 0, 0);
 
-        lv_obj_t* heading = make_label(
+        lv_obj_t* heading = label(
             card, title, color(0xF3F6F9), &lv_font_montserrat_28);
         lv_obj_set_pos(heading, 0, 50);
 
-        lv_obj_t* detail = make_label(card, body, color(0x929EAA));
+        lv_obj_t* detail = label(card, body, color(0x929EAA));
         lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(detail, 610);
         lv_obj_set_pos(detail, 0, 106);
@@ -832,7 +741,7 @@ struct ShellUi::Impl {
             "hardware access.",
             color(0x73AFFF));
 
-        lv_obj_t* provider = make_label(
+        lv_obj_t* provider = label(
             card, "Provider:  not configured", color(0xC8D5E6), &lv_font_montserrat_20);
         lv_obj_set_pos(provider, 0, 312);
     }
@@ -854,25 +763,25 @@ struct ShellUi::Impl {
 
         const std::string brightness =
             std::to_string(desired_brightness()) + "% brightness";
-        lv_obj_t* display_row = make_row(body, "Display", brightness.c_str());
+        lv_obj_t* display_row = settings_row(body, "Display", brightness.c_str());
         lv_obj_add_event_cb(display_row, on_display, LV_EVENT_CLICKED, this);
 
         const std::string network_state =
             net.ssid.empty()
                 ? "Wi-Fi not configured"
                 : (net.connected ? net.ssid : "Wi-Fi offline");
-        lv_obj_t* network_row = make_row(body, "Network", network_state.c_str());
+        lv_obj_t* network_row = settings_row(body, "Network", network_state.c_str());
         lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* storage_row = make_row(
+        lv_obj_t* storage_row = settings_row(
             body, "Storage", platform::to_string(sd.state));
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* settings_row = make_row(
+        lv_obj_t* settings_row = settings_row(
             body, "Settings", "All device configuration");
         lv_obj_add_event_cb(settings_row, on_settings, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* system_row = make_row(
+        lv_obj_t* system_row = settings_row(
             body, "About this device", "Build, runtime and hardware status");
         lv_obj_add_event_cb(system_row, on_system, LV_EVENT_CLICKED, this);
     }
@@ -889,7 +798,7 @@ struct ShellUi::Impl {
             "rules and model-driven behavior share one capability layer.",
             color(0xD6A2F0));
 
-        lv_obj_t* rules = make_label(
+        lv_obj_t* rules = label(
             card, "Active rules   0", color(0xD9C9E1), &lv_font_montserrat_20);
         lv_obj_set_pos(rules, 0, 312);
     }
@@ -906,19 +815,19 @@ struct ShellUi::Impl {
         lv_obj_set_style_pad_row(body, 10, 0);
         lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
 
-        lv_obj_t* ai = make_row(body, "AI", "Optional model and assistant surface");
+        lv_obj_t* ai = settings_row(body, "AI", "Optional model and assistant surface");
         lv_obj_add_event_cb(ai, on_ai, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* control = make_row(body, "Control", "Entities and Actions");
+        lv_obj_t* control = settings_row(body, "Control", "Entities and Actions");
         lv_obj_add_event_cb(control, on_control, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* automations = make_row(body, "Automations", "Local event-action rules");
+        lv_obj_t* automations = settings_row(body, "Automations", "Local event-action rules");
         lv_obj_add_event_cb(automations, on_automations, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* storage_row = make_row(body, "Storage", "Internal and SD volume");
+        lv_obj_t* storage_row = settings_row(body, "Storage", "Internal and SD volume");
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* settings = make_row(body, "Settings", "Device configuration");
+        lv_obj_t* settings = settings_row(body, "Settings", "Device configuration");
         lv_obj_add_event_cb(settings, on_settings, LV_EVENT_CLICKED, this);
     }
 
@@ -928,17 +837,17 @@ struct ShellUi::Impl {
         lv_obj_t* brightness = lv_obj_create(screen);
         lv_obj_set_pos(brightness, 24, 118);
         lv_obj_set_size(brightness, 672, 190);
-        set_panel_style(brightness, color(0x11151A), color(0x2A313A));
+        theme::apply_panel(brightness, color(0x11151A), color(0x2A313A));
         lv_obj_set_style_pad_all(brightness, 24, 0);
 
-        lv_obj_t* title = make_label(
+        lv_obj_t* title = label(
             brightness, "Brightness", color(0xF2F5F8), &lv_font_montserrat_20);
         lv_obj_set_pos(title, 0, 0);
 
         const int value = desired_brightness();
         char value_text[16]{};
         std::snprintf(value_text, sizeof(value_text), "%d%%", value);
-        brightness_value_label = make_label(
+        brightness_value_label = label(
             brightness, value_text, color(0x7FB4FF), &lv_font_montserrat_28);
         lv_obj_align(brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, -2);
 
@@ -957,32 +866,32 @@ struct ShellUi::Impl {
         const platform::NetworkSnapshot net = network.snapshot();
         const platform::SdVolumeSnapshot sd = storage.snapshot();
 
-        lv_obj_t* network_button = make_tile(
+        lv_obj_t* network_button = tile(
             screen, 24, 330, 216, "Network",
             net.ssid.empty() ? "Not configured"
                              : (net.connected ? "Connected" : "Offline"),
             color(0x151C24), color(0x2A3D52));
         lv_obj_add_event_cb(network_button, on_network, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* storage_button = make_tile(
+        lv_obj_t* storage_button = tile(
             screen, 252, 330, 216, "Storage",
             platform::to_string(sd.state),
             color(0x201F16), color(0x4E4A29));
         lv_obj_add_event_cb(storage_button, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* settings_button = make_tile(
+        lv_obj_t* settings_button = tile(
             screen, 480, 330, 216, "Settings",
             "All controls",
             color(0x191B20), color(0x30343C));
         lv_obj_add_event_cb(settings_button, on_settings, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* note = make_label(
+        lv_obj_t* note = label(
             screen,
             "Quick Settings is system chrome; changes still flow through DEOS resources.",
             color(0x697582));
         lv_obj_set_pos(note, 24, 514);
 
-        lv_obj_t* home = make_action(
+        lv_obj_t* home = action(
             screen, "Home", color(0x20252D), color(0xE2E7ED), 672);
         lv_obj_set_pos(home, 24, 584);
         lv_obj_add_event_cb(home, on_home, LV_EVENT_CLICKED, this);
@@ -1000,27 +909,27 @@ struct ShellUi::Impl {
         lv_obj_set_style_pad_row(body, 10, 0);
         lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
 
-        lv_obj_t* network_row = make_row(body, "Network", "Wi-Fi and local control plane");
+        lv_obj_t* network_row = settings_row(body, "Network", "Wi-Fi and local control plane");
         lv_obj_add_event_cb(network_row, on_network, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* display_row = make_row(body, "Display", "Brightness and screen behavior");
+        lv_obj_t* display_row = settings_row(body, "Display", "Brightness and screen behavior");
         lv_obj_add_event_cb(display_row, on_display, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* storage_row = make_row(body, "Storage", "SD card and DEOS volume");
+        lv_obj_t* storage_row = settings_row(body, "Storage", "SD card and DEOS volume");
         lv_obj_add_event_cb(storage_row, on_storage, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* update_row = make_row(body, "Software Update", "A/B OTA and build status");
+        lv_obj_t* update_row = settings_row(body, "Software Update", "A/B OTA and build status");
         lv_obj_add_event_cb(update_row, on_update, LV_EVENT_CLICKED, this);
 
         if (developer_mode) {
-            lv_obj_t* developer = make_row(body, "Developer", "Diagnostics and debug tools");
+            lv_obj_t* developer = settings_row(body, "Developer", "Diagnostics and debug tools");
             lv_obj_add_event_cb(developer, on_developer, LV_EVENT_CLICKED, this);
         }
 
-        lv_obj_t* about = make_row(body, "About DEOS", "System, build and hardware");
+        lv_obj_t* about = settings_row(body, "About DEOS", "System, build and hardware");
         lv_obj_add_event_cb(about, on_system, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* note = make_label(
+        lv_obj_t* note = label(
             body,
             developer_mode
                 ? "Developer Mode is enabled and persists across reboot."
@@ -1036,10 +945,10 @@ struct ShellUi::Impl {
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
 
-        lv_obj_t* left = make_label(row, key, color(0x7F8A97));
+        lv_obj_t* left = label(row, key, color(0x7F8A97));
         lv_obj_align(left, LV_ALIGN_LEFT_MID, 0, 0);
 
-        lv_obj_t* right = make_label(row, value.c_str(), color(0xE6EAF0));
+        lv_obj_t* right = label(row, value.c_str(), color(0xE6EAF0));
         lv_obj_align(right, LV_ALIGN_RIGHT_MID, 0, 0);
     }
 
@@ -1050,13 +959,13 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 118);
         lv_obj_set_size(card, 672, 430);
-        set_panel_style(card, color(0x11151A), color(0x262C34));
+        theme::apply_panel(card, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(card, 26, 0);
 
         const char* state_text = net.ssid.empty()
                                      ? "NOT CONFIGURED"
                                      : (net.connected ? "CONNECTED" : "CONNECTING");
-        lv_obj_t* state = make_label(
+        lv_obj_t* state = label(
             card,
             state_text,
             net.connected ? color(0x72D69D) : color(0xE2C66F),
@@ -1064,7 +973,7 @@ struct ShellUi::Impl {
         lv_obj_set_pos(state, 0, 0);
 
         if (!net.initialized) {
-            lv_obj_t* note = make_label(
+            lv_obj_t* note = label(
                 card,
                 "Network service is still starting.",
                 color(0x8C97A4));
@@ -1073,14 +982,14 @@ struct ShellUi::Impl {
         }
 
         if (net.ssid.empty()) {
-            lv_obj_t* title = make_label(
+            lv_obj_t* title = label(
                 card,
                 "Wi-Fi is configured only on this display.",
                 color(0xF4F7FA),
                 &lv_font_montserrat_28);
             lv_obj_set_pos(title, 0, 62);
 
-            lv_obj_t* step = make_label(
+            lv_obj_t* step = label(
                 card,
                 "DEOS will not create a setup access point. Tap the button below, "
                 "choose a nearby network and enter its password. Credentials remain "
@@ -1090,7 +999,7 @@ struct ShellUi::Impl {
             lv_obj_set_width(step, 610);
             lv_obj_set_pos(step, 0, 132);
 
-            lv_obj_t* choose = make_action(
+            lv_obj_t* choose = action(
                 screen, "Choose Wi-Fi", color(0x245BA5), color(0xFFFFFF), 672);
             lv_obj_set_pos(choose, 24, 576);
             lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
@@ -1109,12 +1018,12 @@ struct ShellUi::Impl {
             add_info_row(details, "Local name", "deos.local");
             add_info_row(details, "Control API", "port 80 / token auth");
 
-            lv_obj_t* choose = make_action(
+            lv_obj_t* choose = action(
                 screen, "Change Wi-Fi...", color(0x245BA5), color(0xFFFFFF), 326);
             lv_obj_set_pos(choose, 24, 576);
             lv_obj_add_event_cb(choose, on_wifi_scan, LV_EVENT_CLICKED, this);
 
-            lv_obj_t* forget = make_action(
+            lv_obj_t* forget = action(
                 screen, "Forget Wi-Fi...", color(0x3A2023), color(0xF2B2B7), 326);
             lv_obj_set_pos(forget, 370, 576);
             lv_obj_add_event_cb(forget, on_forget_confirm, LV_EVENT_CLICKED, this);
@@ -1145,7 +1054,7 @@ struct ShellUi::Impl {
             lv_obj_set_size(spinner, 58, 58);
             lv_obj_align(spinner, LV_ALIGN_TOP_LEFT, 0, 8);
 
-            lv_obj_t* text = make_label(
+            lv_obj_t* text = label(
                 wifi_scan_body, "Scanning nearby Wi-Fi networks...", color(0x9AA5B2));
             lv_obj_set_pos(text, 82, 26);
             return;
@@ -1153,10 +1062,10 @@ struct ShellUi::Impl {
 
         if (!scan.error.empty()) {
             const std::string error = "Scan failed: " + scan.error;
-            lv_obj_t* text = make_label(wifi_scan_body, error.c_str(), color(0xF0A8AE));
+            lv_obj_t* text = label(wifi_scan_body, error.c_str(), color(0xF0A8AE));
             lv_obj_set_pos(text, 0, 8);
 
-            lv_obj_t* retry = make_action(
+            lv_obj_t* retry = action(
                 wifi_scan_body, "Scan again", color(0x245BA5), color(0xFFFFFF), 612);
             lv_obj_set_pos(retry, 0, 72);
             lv_obj_add_event_cb(retry, on_wifi_rescan, LV_EVENT_CLICKED, this);
@@ -1164,11 +1073,11 @@ struct ShellUi::Impl {
         }
 
         if (scan.entries.empty()) {
-            lv_obj_t* text = make_label(
+            lv_obj_t* text = label(
                 wifi_scan_body, "No networks found.", color(0x8A95A2));
             lv_obj_set_pos(text, 0, 8);
 
-            lv_obj_t* retry = make_action(
+            lv_obj_t* retry = action(
                 wifi_scan_body, "Scan again", color(0x245BA5), color(0xFFFFFF), 612);
             lv_obj_set_pos(retry, 0, 72);
             lv_obj_add_event_cb(retry, on_wifi_rescan, LV_EVENT_CLICKED, this);
@@ -1189,7 +1098,7 @@ struct ShellUi::Impl {
                 entry.rssi,
                 entry.channel);
 
-            lv_obj_t* row = make_row(
+            lv_obj_t* row = settings_row(
                 wifi_scan_body,
                 entry.ssid.c_str(),
                 detail);
@@ -1200,7 +1109,7 @@ struct ShellUi::Impl {
             lv_obj_add_event_cb(row, on_wifi_network_selected, LV_EVENT_CLICKED, this);
         }
 
-        lv_obj_t* rescan = make_action(
+        lv_obj_t* rescan = action(
             wifi_scan_body, "Rescan", color(0x20252D), color(0xDCE3EA), 612);
         lv_obj_add_event_cb(rescan, on_wifi_rescan, LV_EVENT_CLICKED, this);
     }
@@ -1211,7 +1120,7 @@ struct ShellUi::Impl {
         wifi_scan_body = lv_obj_create(screen);
         lv_obj_set_pos(wifi_scan_body, 24, 112);
         lv_obj_set_size(wifi_scan_body, 672, 570);
-        set_panel_style(wifi_scan_body, color(0x11151A), color(0x262C34));
+        theme::apply_panel(wifi_scan_body, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(wifi_scan_body, 24, 0);
         lv_obj_set_style_pad_bottom(wifi_scan_body, 24, 0);
 
@@ -1231,21 +1140,21 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 112);
         lv_obj_set_size(card, 672, wifi_selected_secured ? 180 : 250);
-        set_panel_style(card, color(0x11151A), color(0x2B3440));
+        theme::apply_panel(card, color(0x11151A), color(0x2B3440));
         lv_obj_set_style_pad_all(card, 24, 0);
 
-        lv_obj_t* ssid = make_label(
+        lv_obj_t* ssid = label(
             card, wifi_selected_ssid.c_str(), color(0xF5F7FA), &lv_font_montserrat_28);
         lv_obj_set_pos(ssid, 0, 0);
 
-        lv_obj_t* detail = make_label(
+        lv_obj_t* detail = label(
             card,
             wifi_selected_secured ? "Enter the network password." : "This network is open.",
             color(0x8F9BA8));
         lv_obj_set_pos(detail, 0, 48);
 
         if (!wifi_join_error.empty()) {
-            lv_obj_t* error = make_label(card, wifi_join_error.c_str(), color(0xF0A8AE));
+            lv_obj_t* error = label(card, wifi_join_error.c_str(), color(0xF0A8AE));
             lv_obj_set_pos(error, 0, 86);
         }
 
@@ -1266,7 +1175,7 @@ struct ShellUi::Impl {
             lv_keyboard_set_textarea(keyboard, wifi_password_area);
         }
 
-        lv_obj_t* join = make_action(
+        lv_obj_t* join = action(
             screen, "Save and connect", color(0x245BA5), color(0xFFFFFF), 672);
         lv_obj_set_pos(join, 24, 632);
         lv_obj_add_event_cb(join, on_wifi_join, LV_EVENT_CLICKED, this);
@@ -1278,17 +1187,17 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 138);
         lv_obj_set_size(card, 672, 300);
-        set_panel_style(card, color(0x24171A), color(0x633239));
+        theme::apply_panel(card, color(0x24171A), color(0x633239));
         lv_obj_set_style_pad_all(card, 28, 0);
 
-        lv_obj_t* title = make_label(
+        lv_obj_t* title = label(
             card,
             "DEOS will remove the saved Wi-Fi profile.",
             color(0xF4B4BA),
             &lv_font_montserrat_28);
         lv_obj_set_pos(title, 0, 0);
 
-        lv_obj_t* detail = make_label(
+        lv_obj_t* detail = label(
             card,
             "The device API token is kept. After reboot DEOS will return to\n"
             "local-only mode. Configure Wi-Fi again in Settings > Network.",
@@ -1297,12 +1206,12 @@ struct ShellUi::Impl {
         lv_obj_set_width(detail, 610);
         lv_obj_set_pos(detail, 0, 78);
 
-        lv_obj_t* cancel = make_action(
+        lv_obj_t* cancel = action(
             screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
         lv_obj_set_pos(cancel, 24, 492);
         lv_obj_add_event_cb(cancel, on_back, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* forget = make_action(
+        lv_obj_t* forget = action(
             screen, "Forget and reboot", color(0x8D3039), color(0xFFFFFF), 340);
         lv_obj_set_pos(forget, 356, 492);
         lv_obj_add_event_cb(forget, on_forget_wifi, LV_EVENT_CLICKED, this);
@@ -1314,7 +1223,7 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 120);
         lv_obj_set_size(card, 672, 430);
-        set_panel_style(card, color(0x11151A), color(0x29333E));
+        theme::apply_panel(card, color(0x11151A), color(0x29333E));
         lv_obj_set_style_pad_all(card, 26, 0);
         lv_obj_set_style_pad_row(card, 2, 0);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -1337,7 +1246,7 @@ struct ShellUi::Impl {
         add_info_row(card, "Device",
                      net.connected && !net.ip.empty() ? net.ip : "deos.local");
 
-        lv_obj_t* note = make_label(
+        lv_obj_t* note = label(
             screen,
             "Developer OTA uploads only the application image to Update/system.\n"
             "Use: deosctl ota deos_esp32p4.bin\n"
@@ -1354,7 +1263,7 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 110);
         lv_obj_set_size(card, 672, 510);
-        set_panel_style(card, color(0x10161B), color(0x28404A));
+        theme::apply_panel(card, color(0x10161B), color(0x28404A));
         lv_obj_set_style_pad_all(card, 24, 0);
         lv_obj_set_style_pad_row(card, 2, 0);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -1408,7 +1317,7 @@ struct ShellUi::Impl {
             add_info_row(card, "API token 2/2", token_b);
         }
 
-        lv_obj_t* disable = make_action(
+        lv_obj_t* disable = action(
             screen, "Disable Developer Mode", color(0x302226), color(0xE7B3B8), 672);
         lv_obj_set_pos(disable, 24, 628);
         lv_obj_add_event_cb(disable, on_disable_developer, LV_EVENT_CLICKED, this);
@@ -1431,17 +1340,17 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 130);
         lv_obj_set_size(card, 672, 360);
-        set_panel_style(card, color(0x11151A), color(0x262C34));
+        theme::apply_panel(card, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(card, 28, 0);
 
-        lv_obj_t* heading = make_label(
+        lv_obj_t* heading = label(
             card, "Brightness", color(0xF2F5F8), &lv_font_montserrat_20);
         lv_obj_set_pos(heading, 0, 0);
 
         const int brightness = desired_brightness();
         char value_text[16]{};
         std::snprintf(value_text, sizeof(value_text), "%d%%", brightness);
-        brightness_value_label = make_label(
+        brightness_value_label = label(
             card, value_text, color(0x7FB4FF), &lv_font_montserrat_28);
         lv_obj_align(brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, -2);
 
@@ -1457,7 +1366,7 @@ struct ShellUi::Impl {
         lv_obj_add_event_cb(slider, on_brightness_value, LV_EVENT_VALUE_CHANGED, this);
         lv_obj_add_event_cb(slider, on_brightness_commit, LV_EVENT_RELEASED, this);
 
-        lv_obj_t* note = make_label(
+        lv_obj_t* note = label(
             card,
             "Brightness is applied through Display/primary desired state.\n"
             "The 10% minimum prevents an accidental black-screen trap.",
@@ -1466,7 +1375,7 @@ struct ShellUi::Impl {
         lv_obj_set_width(note, 610);
         lv_obj_set_pos(note, 0, 158);
 
-        lv_obj_t* state = make_label(
+        lv_obj_t* state = label(
             card,
             "Touch  →  Action  →  Desired State  →  Reconciler  →  Display",
             color(0x66809F));
@@ -1479,7 +1388,7 @@ struct ShellUi::Impl {
         lv_obj_t* card = lv_obj_create(screen);
         lv_obj_set_pos(card, 24, 110);
         lv_obj_set_size(card, 672, 480);
-        set_panel_style(card, color(0x11151A), color(0x262C34));
+        theme::apply_panel(card, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(card, 24, 0);
         lv_obj_set_style_pad_row(card, 2, 0);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -1517,14 +1426,14 @@ struct ShellUi::Impl {
         lv_obj_t* build_button = lv_button_create(screen);
         lv_obj_set_pos(build_button, 24, 606);
         lv_obj_set_size(build_button, 672, 76);
-        set_panel_style(
+        theme::apply_panel(
             build_button,
             developer_mode ? color(0x14241C) : color(0x13171D),
             developer_mode ? color(0x28573F) : color(0x292F38));
         lv_obj_set_style_shadow_width(build_button, 0, 0);
         lv_obj_add_event_cb(build_button, on_build_tap, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* build_text = make_label(
+        lv_obj_t* build_text = label(
             build_button,
             developer_mode
                 ? "Developer mode enabled"
@@ -1533,7 +1442,7 @@ struct ShellUi::Impl {
             &lv_font_montserrat_20);
         lv_obj_align(build_text, LV_ALIGN_LEFT_MID, 0, -10);
 
-        lv_obj_t* hint = make_label(
+        lv_obj_t* hint = label(
             build_button,
             developer_mode
                 ? "Diagnostics will appear in Settings."
@@ -1562,7 +1471,7 @@ struct ShellUi::Impl {
         storage_render_key = render_key;
         lv_obj_clean(storage_body);
 
-        lv_obj_t* status = make_label(
+        lv_obj_t* status = label(
             storage_body,
             platform::to_string(sd.state),
             sd.state == platform::SdVolumeState::Ready
@@ -1573,14 +1482,14 @@ struct ShellUi::Impl {
             &lv_font_montserrat_28);
         lv_obj_set_pos(status, 0, 0);
 
-        lv_obj_t* message = make_label(storage_body, sd.message.c_str(), color(0x9AA5B2));
+        lv_obj_t* message = label(storage_body, sd.message.c_str(), color(0x9AA5B2));
         lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(message, 620);
         lv_obj_set_pos(message, 0, 48);
 
         int y = 108;
         if (!sd.card_name.empty()) {
-            lv_obj_t* card_name = make_label(storage_body, sd.card_name.c_str(), color(0xD7DDE5));
+            lv_obj_t* card_name = label(storage_body, sd.card_name.c_str(), color(0xD7DDE5));
             lv_obj_set_pos(card_name, 0, y);
             y += 34;
         }
@@ -1591,48 +1500,48 @@ struct ShellUi::Impl {
                                       : 0;
             const std::string usage =
                 bytes_human(used) + " used  /  " + bytes_human(sd.total_bytes);
-            lv_obj_t* usage_label = make_label(storage_body, usage.c_str(), color(0x737F8C));
+            lv_obj_t* usage_label = label(storage_body, usage.c_str(), color(0x737F8C));
             lv_obj_set_pos(usage_label, 0, y);
             y += 48;
         }
 
         if (sd.state == platform::SdVolumeState::Foreign) {
-            lv_obj_t* preserve = make_label(
+            lv_obj_t* preserve = label(
                 storage_body,
                 "Existing files are untouched until you choose an action.",
                 color(0xD9C87F));
             lv_obj_set_pos(preserve, 0, y);
             y += 58;
 
-            lv_obj_t* keep = make_action(
+            lv_obj_t* keep = action(
                 storage_body, "Leave unchanged", color(0x20252D), color(0xE2E7ED));
             lv_obj_set_pos(keep, 0, y);
             lv_obj_add_event_cb(keep, on_home, LV_EVENT_CLICKED, this);
 
-            lv_obj_t* init = make_action(
+            lv_obj_t* init = action(
                 storage_body, "Initialize for DEOS", color(0x245BA5), color(0xFFFFFF));
             lv_obj_set_pos(init, 316, y);
             lv_obj_add_event_cb(init, on_initialize_sd, LV_EVENT_CLICKED, this);
 
             y += 76;
-            lv_obj_t* format = make_action(
+            lv_obj_t* format = action(
                 storage_body, "Format instead...", color(0x3A2023), color(0xF1A5AB), 612);
             lv_obj_set_pos(format, 0, y);
             lv_obj_add_event_cb(format, on_format_confirm, LV_EVENT_CLICKED, this);
         } else if (sd.state == platform::SdVolumeState::NeedsFormat) {
-            lv_obj_t* warning = make_label(
+            lv_obj_t* warning = label(
                 storage_body,
                 "DEOS will never format this card automatically.",
                 color(0xF1A5AB));
             lv_obj_set_pos(warning, 0, y);
             y += 58;
 
-            lv_obj_t* format = make_action(
+            lv_obj_t* format = action(
                 storage_body, "Format for DEOS...", color(0x7A2830), color(0xFFFFFF), 612);
             lv_obj_set_pos(format, 0, y);
             lv_obj_add_event_cb(format, on_format_confirm, LV_EVENT_CLICKED, this);
         } else if (sd.state == platform::SdVolumeState::Error) {
-            lv_obj_t* warning = make_label(
+            lv_obj_t* warning = label(
                 storage_body,
                 "The card was not classified safely. DEOS will not offer formatting.",
                 color(0xF1A5AB));
@@ -1641,12 +1550,12 @@ struct ShellUi::Impl {
             lv_obj_set_pos(warning, 0, y);
             y += 72;
 
-            lv_obj_t* retry = make_action(
+            lv_obj_t* retry = action(
                 storage_body, "Rescan", color(0x245BA5), color(0xFFFFFF), 612);
             lv_obj_set_pos(retry, 0, y);
             lv_obj_add_event_cb(retry, on_rescan_sd, LV_EVENT_CLICKED, this);
         } else if (sd.state == platform::SdVolumeState::Ready) {
-            lv_obj_t* ready = make_label(
+            lv_obj_t* ready = label(
                 storage_body,
                 "DEOS/Apps  /  AppData  /  Packages  /  Backups  /  Logs\n"
                 "Media  /  Documents  /  Downloads",
@@ -1655,7 +1564,7 @@ struct ShellUi::Impl {
             lv_obj_set_width(ready, 610);
             lv_obj_set_pos(ready, 0, y);
         } else if (sd.state == platform::SdVolumeState::Absent) {
-            lv_obj_t* hint = make_label(
+            lv_obj_t* hint = label(
                 storage_body,
                 "Insert a microSD card, then ask DEOS to scan the slot again.",
                 color(0x737F8C));
@@ -1664,7 +1573,7 @@ struct ShellUi::Impl {
             lv_obj_set_pos(hint, 0, y);
             y += 72;
 
-            lv_obj_t* retry = make_action(
+            lv_obj_t* retry = action(
                 storage_body, "Rescan SD card", color(0x245BA5), color(0xFFFFFF), 612);
             lv_obj_set_pos(retry, 0, y);
             lv_obj_add_event_cb(retry, on_rescan_sd, LV_EVENT_CLICKED, this);
@@ -1672,7 +1581,7 @@ struct ShellUi::Impl {
             lv_obj_t* progress = lv_spinner_create(storage_body);
             lv_obj_set_size(progress, 58, 58);
             lv_obj_set_pos(progress, 0, y);
-            lv_obj_t* op = make_label(
+            lv_obj_t* op = label(
                 storage_body,
                 sd.operation == "format"
                     ? "Formatting can take a moment. Do not remove the card."
@@ -1689,7 +1598,7 @@ struct ShellUi::Impl {
         storage_render_key.clear();
         lv_obj_set_pos(storage_body, 24, 112);
         lv_obj_set_size(storage_body, 672, 570);
-        set_panel_style(storage_body, color(0x11151A), color(0x262C34));
+        theme::apply_panel(storage_body, color(0x11151A), color(0x262C34));
         lv_obj_set_style_pad_all(storage_body, 24, 0);
 
         render_storage_body();
@@ -1702,15 +1611,15 @@ struct ShellUi::Impl {
         lv_obj_t* warning = lv_obj_create(screen);
         lv_obj_set_pos(warning, 24, 128);
         lv_obj_set_size(warning, 672, 360);
-        set_panel_style(warning, color(0x261417), color(0x713038));
+        theme::apply_panel(warning, color(0x261417), color(0x713038));
         lv_obj_set_style_pad_all(warning, 28, 0);
 
-        lv_obj_t* title = make_label(
+        lv_obj_t* title = label(
             warning, "This deletes everything on the SD card.", color(0xFFB2B8),
             &lv_font_montserrat_28);
         lv_obj_set_pos(title, 0, 0);
 
-        lv_obj_t* detail = make_label(
+        lv_obj_t* detail = label(
             warning,
             "DEOS will replace the card layout with one partition using the\n"
             "whole card, create a FAT volume, then initialize:\n\n"
@@ -1723,17 +1632,17 @@ struct ShellUi::Impl {
         lv_obj_set_width(detail, 610);
         lv_obj_set_pos(detail, 0, 64);
 
-        lv_obj_t* cancel = make_action(
+        lv_obj_t* cancel = action(
             screen, "Cancel", color(0x20252D), color(0xE2E7ED), 316);
         lv_obj_set_pos(cancel, 24, 530);
         lv_obj_add_event_cb(cancel, on_back, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* erase = make_action(
+        lv_obj_t* erase = action(
             screen, "Erase and format", color(0x9A2F39), color(0xFFFFFF), 340);
         lv_obj_set_pos(erase, 356, 530);
         lv_obj_add_event_cb(erase, on_format_sd, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* footnote = make_label(
+        lv_obj_t* footnote = label(
             screen,
             "Formatting only starts after pressing the red button above.",
             color(0x6F7A86));
@@ -1938,7 +1847,7 @@ struct ShellUi::Impl {
         }
 
         lv_obj_t* screen = ui->begin_screen("Connecting", false);
-        lv_obj_t* message = make_label(
+        lv_obj_t* message = label(
             screen,
             "Wi-Fi profile saved. DEOS is rebooting and will connect automatically.",
             color(0xD7DEE7),
@@ -1968,7 +1877,7 @@ struct ShellUi::Impl {
         const auto result = ui->actions.invoke("network.wifi.forget", context);
         if (result.ok) {
             lv_obj_t* screen = ui->begin_screen("Rebooting", false);
-            lv_obj_t* message = make_label(
+            lv_obj_t* message = label(
                 screen,
                 "Wi-Fi profile removed. DEOS is restarting without a saved network...",
                 color(0xD7DEE7),
