@@ -1026,6 +1026,15 @@ struct ShellUi::Impl {
         add_info_row(card, "OTA slot",
                      running != nullptr ? running->label : "unknown");
 
+        const std::string token = network.api_token();
+        if (!token.empty()) {
+            const std::string token_a = token.substr(0, std::min<std::size_t>(16, token.size()));
+            const std::string token_b =
+                token.size() > 16 ? token.substr(16, 16) : std::string("-");
+            add_info_row(card, "API token 1/2", token_a);
+            add_info_row(card, "API token 2/2", token_b);
+        }
+
         lv_obj_t* disable = make_action(
             screen, "Disable Developer Mode", color(0x302226), color(0xE7B3B8), 672);
         lv_obj_set_pos(disable, 24, 628);
