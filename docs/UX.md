@@ -211,3 +211,21 @@ The shell receives the `network.credentials` capability. The generic remote API 
 Scanning runs outside the LVGL thread. A slow radio scan must not freeze touch/rendering.
 
 The browser-based setup network remains useful when touch/input is unavailable or during hardware recovery.
+
+
+## Resumable onboarding
+
+First-run progress is persisted independently of the rendered screen:
+
+```text
+Welcome → Network → Storage → Ready
+```
+
+A reboot does not reset onboarding to Welcome. This matters most during network provisioning:
+
+- the on-device Wi-Fi picker stores `Storage` as the next step before saving credentials and rebooting;
+- the browser fallback stores the same next step before rebooting;
+- after reconnect, DEOS resumes at the Storage policy screen;
+- completing onboarding marks the setup complete and enters Home.
+
+The persisted step is product state, not UI navigation history. Normal Back/Home navigation remains transient.
