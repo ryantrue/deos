@@ -15,6 +15,9 @@ on:
       - ".github/workflows/esp32p4-ci.yml"
 
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -26,7 +29,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build ESP32-P4 bootstrap with ESP-IDF 6.1
+      - name: Build ESP32-P4 firmware with ESP-IDF 6.1
+        # Public CI firmware must never embed provisioning credentials. Wi-Fi
+        # bootstrap values are local-build-only; persistent credentials live in NVS.
+        env:
+          DEOS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.1
@@ -62,17 +69,23 @@ jobs:
           display="$firmware/display_controller.cpp"
           touch="$firmware/touch_controller.cpp"
           shell="$firmware/ui_shell.cpp"
+          widgets="$firmware/ui_widgets.cpp"
+          home="$firmware/ui_home_screen.cpp"
 
-          grep -Fq 'dpi.num_fbs = 2;' "$display"
-          grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
-          grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
-          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
+          grep -Fq 'dpi.num_fbs = 3;' "$display"
+          grep -Fq 'heap_caps_aligned_calloc' "$display"
+          grep -Fq 'MALLOC_CAP_INTERNAL' "$display"
+          grep -Fq 'LV_DISPLAY_RENDER_MODE_PARTIAL' "$display"
+          ! grep -Fq 'esp_lcd_dpi_panel_get_frame_buffer' "$display"
+          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_FULL' "$display"
+          ! grep -Fq 'LV_DISPLAY_RENDER_MODE_DIRECT' "$display"
 
           grep -Fq 'data->point.x = self->last_x;' "$touch"
           grep -Fq 'data->point.y = self->last_y;' "$touch"
 
-          ! grep -Fq 'make_label(screen, "DEOS"' "$shell"
-          grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$shell"
+          ! grep -Fq 'label(screen, "DEOS"' "$shell"
+          grep -Fq '{"HOME", "CONTROL", "APPS", "SETTINGS"}' "$home"
+          grep -Fq 'lv_obj_set_style_transform_scale' "$widgets"
           grep -Fq '"screen: %s"' "$shell"
 
       - name: Collect flash package
@@ -152,3 +165,20 @@ jobs:
           path: firmware/esp32p4/artifact/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish temporary dev OTA channel
+        if: github.event_name == 'push' && github.ref_name == 'refactor/p4-ui-foundation'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEOS_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image="firmware/esp32p4/build/deos_esp32p4.bin"
+          manifest="firmware/esp32p4/artifact/dev-ota.json"
+          test -s "$image"
+          sha256="$(shasum -a 256 "$image" | awk '{print $1}')"
+          printf '{"source_commit":"%s","sha256":"%s","url":"https://github.com/ryantrue/deos/releases/download/dev-p4-latest/deos_esp32p4.bin"}\n'             "$DEOS_SOURCE_SHA" "$sha256" > "$manifest"
+
+          gh release delete dev-p4-latest --cleanup-tag -y || true
+          gh release create dev-p4-latest             --target "$DEOS_SOURCE_SHA"             --title "DEOS ESP32-P4 temporary dev OTA"             --notes "Temporary automatic OTA channel for refactor/p4-ui-foundation."             --prerelease             "$image#deos_esp32p4.bin"             "$manifest#dev-ota.json"

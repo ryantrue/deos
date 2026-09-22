@@ -12,6 +12,7 @@
 #include "esp_lcd_st7703.h"
 #include "esp_ldo_regulator.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -37,6 +38,7 @@ constexpr int kMipiLdoChannel = 3;
 constexpr int kMipiLdoMv = 2500;
 constexpr int kBoardLdoChannel = 4;
 constexpr int kBoardLdoMv = 3300;
+constexpr int kDrawLines = 50;
 constexpr int kLvglTickMs = 2;
 constexpr uint32_t kLvglTaskStack = 6144;
 constexpr UBaseType_t kLvglTaskPriority = 4;
@@ -116,8 +118,8 @@ struct DisplayController::Impl {
     esp_timer_handle_t tick_timer{nullptr};
     lv_display_t* display{nullptr};
     TaskHandle_t lvgl_task_handle{nullptr};
-    void* frame_buffer_a{nullptr};
-    void* frame_buffer_b{nullptr};
+    void* draw_buffer_a{nullptr};
+    void* draw_buffer_b{nullptr};
     bool initialized{false};
     int brightness{0};
 
@@ -190,10 +192,11 @@ struct DisplayController::Impl {
         dpi.dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT;
         dpi.dpi_clock_freq_mhz = kDpiClockMhz;
         dpi.in_color_format = LCD_COLOR_FMT_RGB565;
-        // Use the panel buffers as complete LVGL frames. Rotating three panel
-        // buffers while updating them with unrelated partial draw buffers
-        // leaves different UI generations in each buffer and visibly flickers.
-        dpi.num_fbs = 2;
+        // Keep two complete panel buffers. LVGL DIRECT mode below renders only
+        // invalidated regions into these screen-sized buffers; FULL mode forces
+        // a complete 720x720 software redraw on every refresh and can starve
+        // IDLE0 long enough to trip the task watchdog.
+        // Waveshare BSP 3.x uses TRIPLE_PARTIAL for this 720x720 MIPI panel.\n        // Three scan-out buffers decouple DSI refresh from LVGL partial rendering.\n        dpi.num_fbs = 3;
         dpi.video_timing.h_size = kWidth;
         dpi.video_timing.v_size = kHeight;
         dpi.video_timing.hsync_back_porch = 50;
@@ -234,24 +237,29 @@ struct DisplayController::Impl {
         lv_display_set_user_data(display, panel);
         lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
 
-        ESP_RETURN_ON_ERROR(
-            esp_lcd_dpi_panel_get_frame_buffer(
-                panel, 2, &frame_buffer_a, &frame_buffer_b),
-            kTag,
-            "get DPI framebuffers failed");
-        if (frame_buffer_a == nullptr || frame_buffer_b == nullptr) {
-            ESP_LOGE(kTag, "DPI driver did not return two framebuffers");
+        // Keep LVGL's software render buffers independent from the DPI panel's
+        // scan-out framebuffers. DIRECT/FULL rendering against the panel buffers
+        // can monopolize a P4 core during 720x720 redraws and stalls input.
+        constexpr size_t kBytesPerPixel = 2;
+        const size_t draw_bytes =
+            static_cast<size_t>(kWidth) * kDrawLines * kBytesPerPixel;
+        // Match the current Waveshare/Espressif BSP strategy: TRIPLE_PARTIAL
+        // uses one small LVGL draw buffer in internal RAM. Keeping this hot
+        // render buffer out of PSRAM avoids coupling every LVGL draw operation
+        // to the external-memory bus while the DSI engine scans out frames.
+        draw_buffer_a = heap_caps_aligned_calloc(
+            64, 1, draw_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (draw_buffer_a == nullptr) {
+            ESP_LOGE(kTag, "LVGL internal draw-buffer allocation failed (%u bytes)",
+                     static_cast<unsigned>(draw_bytes));
             return ESP_ERR_NO_MEM;
         }
 
-        constexpr size_t kBytesPerPixel = 2;
-        const size_t frame_bytes =
-            static_cast<size_t>(kWidth) * kHeight * kBytesPerPixel;
         lv_display_set_buffers(display,
-                               frame_buffer_a,
-                               frame_buffer_b,
-                               frame_bytes,
-                               LV_DISPLAY_RENDER_MODE_FULL);
+                               draw_buffer_a,
+                               nullptr,
+                               draw_bytes,
+                               LV_DISPLAY_RENDER_MODE_PARTIAL);
         lv_display_set_flush_cb(display, lvgl_flush);
 
         esp_lcd_dpi_panel_event_callbacks_t callbacks{};

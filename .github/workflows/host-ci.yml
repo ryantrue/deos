@@ -2,7 +2,21 @@ name: Host Core CI
 
 on:
   push:
+    paths:
+      - "core/**"
+      - "tests/**"
+      - "tools/deosctl/**"
+      - "config/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/host-ci.yml"
   pull_request:
+    paths:
+      - "core/**"
+      - "tests/**"
+      - "tools/deosctl/**"
+      - "config/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/host-ci.yml"
 
 
 concurrency:

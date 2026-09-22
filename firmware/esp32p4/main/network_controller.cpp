@@ -456,6 +456,16 @@ struct NetworkController::Impl {
         std::string loaded_password = read_string(nvs, kPassKey);
         std::string loaded_token = read_string(nvs, kTokenKey);
 
+#if defined(DEOS_DEV_WIFI_SSID) && defined(DEOS_DEV_WIFI_PASSWORD)
+        // Temporary dev bootstrap: NVS remains authoritative once configured,
+        // but a clean board can join the test WLAN immediately after flashing.
+        if (loaded_ssid.empty()) {
+            loaded_ssid = DEOS_DEV_WIFI_SSID;
+            loaded_password = DEOS_DEV_WIFI_PASSWORD;
+            ESP_LOGW(kTag, "Using temporary build-time developer Wi-Fi profile");
+        }
+#endif
+
         if (loaded_token.empty()) {
             loaded_token = hex_token();
             const esp_err_t token_err =
