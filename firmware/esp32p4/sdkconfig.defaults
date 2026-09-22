@@ -7,6 +7,10 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # default (-Og): a single refresh can starve CPU1's idle task for seconds.
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
+# Keep frame pointers in development firmware so task-watchdog register dumps
+# can be turned into useful call stacks on ESP32-P4 instead of raw PCs only.
+CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y
+
 # DEOS uses A/B OTA slots. With blank otadata and no factory partition,
 # ESP-IDF boots ota_0 on the first USB flash.
 CONFIG_PARTITION_TABLE_CUSTOM=y
