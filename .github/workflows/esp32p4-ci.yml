@@ -29,10 +29,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build ESP32-P4 bootstrap with ESP-IDF 6.1
+      - name: Build ESP32-P4 firmware with ESP-IDF 6.1
+        # Public CI firmware must never embed provisioning credentials. Wi-Fi
+        # bootstrap values are local-build-only; persistent credentials live in NVS.
         env:
-          DEOS_DEV_WIFI_SSID: ${{ secrets.DEOS_DEV_WIFI_SSID }}
-          DEOS_DEV_WIFI_PASSWORD: ${{ secrets.DEOS_DEV_WIFI_PASSWORD }}
           DEOS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         uses: espressif/esp-idf-ci-action@v1
         with:
